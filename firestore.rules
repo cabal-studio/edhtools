@@ -1,0 +1,64 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function tourn(code) {
+      return get(/databases/$(database)/documents/tournaments/$(code)).data;
+    }
+    function isOrg(code) {
+      return signedIn() && tourn(code).organizerId == request.auth.uid;
+    }
+
+    // Lista personal de torneos (organizados / unidos) y nick.
+    match /users/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /tournaments/{code} {
+      // Se puede abrir un torneo conociendo su clave, pero no listar todos.
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && code.matches('^[A-Z0-9]{6}$')
+        && request.resource.data.organizerId == request.auth.uid;
+      // Solo el organizador modifica el torneo y no puede transferirlo.
+      allow update: if signedIn()
+        && resource.data.organizerId == request.auth.uid
+        && request.resource.data.organizerId == resource.data.organizerId;
+      allow delete: if signedIn() && resource.data.organizerId == request.auth.uid;
+
+      match /players/{pid} {
+        allow read: if signedIn();
+        // Un jugador se inscribe a sí mismo; el organizador agrega a cualquiera.
+        allow create: if isOrg(code) || (
+          signedIn() && pid == request.auth.uid
+          && request.resource.data.uid == request.auth.uid
+          && tourn(code).status != 'finished');
+        // El jugador solo puede cambiar su nick o hacer drop.
+        allow update: if isOrg(code) || (
+          signedIn() && pid == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nick', 'dropped']));
+        allow delete: if isOrg(code);
+      }
+
+      // Rondas, mesas y resultados oficiales: solo el organizador.
+      match /rounds/{rid} {
+        allow read: if signedIn();
+        allow write: if isOrg(code);
+      }
+
+      // Reportes: solo alguien sentado en esa mesa, en la ronda actual.
+      match /reports/{key} {
+        allow read: if signedIn();
+        allow delete: if isOrg(code);
+        allow create, update: if isOrg(code) || (
+          signedIn()
+          && request.resource.data.by == request.auth.uid
+          && request.resource.data.round == tourn(code).currentRound
+          && key == 'r' + string(request.resource.data.round) + '-t' + string(request.resource.data.table)
+          && get(/databases/$(database)/documents/tournaments/$(code)/rounds/$('r' + string(request.resource.data.round))).data.seatOf[request.auth.uid] == request.resource.data.table);
+      }
+    }
+  }
+}

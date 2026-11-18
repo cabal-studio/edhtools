@@ -1,0 +1,43 @@
+# Publica la versión web en https://edhtools.web.app en cada cambio a main.
+name: Publicar web
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: publicar-web
+  cancel-in-progress: true
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.50.0
+          cache: true
+
+      - name: Dependencias
+        run: flutter pub get
+
+      - name: Revisar código (falla solo con errores)
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Pruebas
+        run: flutter test
+
+      - name: Compilar web
+        run: flutter build web --release --no-wasm-dry-run
+
+      - name: Publicar en Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_EDHTOOLS }}
+          channelId: live
+          projectId: edhtools

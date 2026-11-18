@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "557620751172",
+    "project_id": "edhtools",
+    "storage_bucket": "edhtools.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:557620751172:android:291cc650c8f7af3acb0511",
+        "android_client_info": {
+          "package_name": "com.cabalstudio.edhtools"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "557620751172-jqopk5hb50a1mif6qulet2rtbf5mj9t4.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.cabalstudio.edhtools",
+            "certificate_hash": "4abd0818634afc3b579d4b5a37adf24a2d2440ff"
+          }
+        },
+        {
+          "client_id": "557620751172-tgk8ajnu6fcmiihh6clrenjsq5oot0so.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDNJEr3MjO6Pi-AJQyCoF8w6QZSr_HIiHc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "557620751172-tgk8ajnu6fcmiihh6clrenjsq5oot0so.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
