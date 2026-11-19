@@ -35,7 +35,10 @@ enum _Filter { all, manual, app }
 
 /// Mantenedor de jugadores: todos los que han participado en tus torneos.
 class RosterScreen extends StatefulWidget {
-  const RosterScreen({super.key});
+  /// null = mis jugadores; 'g_{id}' = jugadores de un grupo.
+  final String? owner;
+  final String title;
+  const RosterScreen({super.key, this.owner, this.title = 'Mis jugadores'});
   @override
   State<RosterScreen> createState() => _RosterScreenState();
 }
@@ -43,12 +46,13 @@ class RosterScreen extends StatefulWidget {
 class _RosterScreenState extends State<RosterScreen> {
   final _q = TextEditingController();
   _Filter filter = _Filter.all;
-  late final Stream<List<RosterPerson>> _stream = Repo.i.rosterPeople();
+  late final Stream<List<RosterPerson>> _stream =
+      Repo.i.rosterPeople(owner: widget.owner);
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Mis jugadores')),
+      appBar: AppBar(title: Text(widget.title)),
       body: StreamBuilder<List<RosterPerson>>(
         stream: _stream,
         builder: (context, snap) {
@@ -102,7 +106,8 @@ class _RosterScreenState extends State<RosterScreen> {
                   onTap: () => Navigator.push(
                       context,
                       MaterialPageRoute(
-                          builder: (_) => RosterPersonScreen(id: p.id))),
+                          builder: (_) =>
+                              RosterPersonScreen(id: p.id, owner: widget.owner))),
                 ),
               ),
           ]);
@@ -115,7 +120,8 @@ class _RosterScreenState extends State<RosterScreen> {
 /// Ficha de un jugador: nombre, torneos jugados y fusión con una cuenta.
 class RosterPersonScreen extends StatelessWidget {
   final String id;
-  const RosterPersonScreen({super.key, required this.id});
+  final String? owner;
+  const RosterPersonScreen({super.key, required this.id, this.owner});
 
   Future<void> _rename(BuildContext context, RosterPerson p) async {
     final c = TextEditingController(text: p.nick);
@@ -138,13 +144,13 @@ class RosterPersonScreen extends StatelessWidget {
       ),
     );
     if (nick == null || nick.isEmpty || !context.mounted) return;
-    await guard(context, () => Repo.i.renameRosterPerson(p.id, nick));
+    await guard(context, () => Repo.i.renameRosterPerson(p.id, nick, owner: owner));
   }
 
   Future<void> _merge(BuildContext context, RosterPerson manual) async {
     final target = await showDialog<RosterPerson>(
       context: context,
-      builder: (d) => _AccountPicker(exclude: manual.id),
+      builder: (d) => _AccountPicker(exclude: manual.id, owner: owner),
     );
     if (target == null || !context.mounted) return;
     final ok = await confirmDialog(
@@ -158,18 +164,19 @@ class RosterPersonScreen extends StatelessWidget {
     );
     if (!ok || !context.mounted) return;
     await guard(context, () async {
-      await Repo.i.mergeRosterPeople(manual, target);
+      await Repo.i.mergeRosterPeople(manual, target, owner: owner);
       if (!context.mounted) return;
       toast(context, 'Fusionado con ${target.nick}');
       Navigator.pushReplacement(context,
-          MaterialPageRoute(builder: (_) => RosterPersonScreen(id: target.id)));
+          MaterialPageRoute(
+              builder: (_) => RosterPersonScreen(id: target.id, owner: owner)));
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<RosterPerson?>(
-      stream: Repo.i.rosterPerson(id),
+      stream: Repo.i.rosterPerson(id, owner: owner),
       builder: (context, snap) {
         final p = snap.data;
         return Scaffold(
@@ -262,14 +269,16 @@ class RosterPersonScreen extends StatelessWidget {
 /// Elige la cuenta (Google primero) con la que fusionar una ficha manual.
 class _AccountPicker extends StatefulWidget {
   final String exclude;
-  const _AccountPicker({required this.exclude});
+  final String? owner;
+  const _AccountPicker({required this.exclude, this.owner});
   @override
   State<_AccountPicker> createState() => _AccountPickerState();
 }
 
 class _AccountPickerState extends State<_AccountPicker> {
   final _q = TextEditingController();
-  late final Stream<List<RosterPerson>> _stream = Repo.i.rosterPeople();
+  late final Stream<List<RosterPerson>> _stream =
+      Repo.i.rosterPeople(owner: widget.owner);
 
   @override
   Widget build(BuildContext context) {

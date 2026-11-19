@@ -8,23 +8,25 @@ import 'common.dart';
 /// Diálogo del organizador: elige las preguntas de votación de una ronda.
 /// Las preguntas usadas se guardan para futuros torneos.
 Future<List<String>?> editVoteQuestions(
-    BuildContext context, List<String> current) {
+    BuildContext context, List<String> current, {String? owner}) {
   return showDialog<List<String>>(
     context: context,
-    builder: (c) => _VoteQuestionsDialog(current: current),
+    builder: (c) => _VoteQuestionsDialog(current: current, owner: owner),
   );
 }
 
 class _VoteQuestionsDialog extends StatefulWidget {
   final List<String> current;
-  const _VoteQuestionsDialog({required this.current});
+  final String? owner;
+  const _VoteQuestionsDialog({required this.current, this.owner});
   @override
   State<_VoteQuestionsDialog> createState() => _VoteQuestionsDialogState();
 }
 
 class _VoteQuestionsDialogState extends State<_VoteQuestionsDialog> {
   late final List<String> qs = List.of(widget.current);
-  late final Stream<List<String>> _saved = Repo.i.voteQuestions();
+  late final Stream<List<String>> _saved =
+      Repo.i.voteQuestions(owner: widget.owner);
   final _text = TextEditingController();
 
   void _add(String q) {
@@ -86,7 +88,7 @@ class _VoteQuestionsDialogState extends State<_VoteQuestionsDialog> {
                     InputChip(
                       label: Text(q),
                       onPressed: () => _add(q),
-                      onDeleted: () => Repo.i.forgetVoteQuestion(q),
+                      onDeleted: () => Repo.i.forgetVoteQuestion(q, owner: widget.owner),
                       deleteButtonTooltipMessage: 'Olvidar pregunta',
                     ),
                 ]),

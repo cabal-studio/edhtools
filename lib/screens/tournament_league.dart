@@ -116,9 +116,10 @@ extension _LeagueUI on _TournamentScreenState {
               onPressed: r == null || busy
                   ? null
                   : () async {
-                      final qs = await editVoteQuestions(context, r.voteQuestions);
+                      final qs = await editVoteQuestions(context, r.voteQuestions,
+                          owner: t.ownerId);
                       if (qs == null || !mounted) return;
-                      await _run(() => _repo.setVoteQuestions(code, r.n, qs));
+                      await _run(() => _repo.setVoteQuestions(code, r.n, qs, owner: t.ownerId));
                     },
               icon: const Icon(Icons.how_to_vote, size: 18),
               label: Text(r == null || r.voteQuestions.isEmpty
@@ -642,6 +643,7 @@ class _LeagueSettingsFormState extends State<_LeagueSettingsForm> {
           ),
           if (achOn) ...[
             AchievementSelector(
+                owner: t.ownerId,
                 selected: achs,
                 onChanged: (v) => setState(() {
                       achs = v;

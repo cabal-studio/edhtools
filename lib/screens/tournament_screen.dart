@@ -418,9 +418,10 @@ class _TournamentScreenState extends State<TournamentScreen> {
               onPressed: pr == null || busy
                   ? null
                   : () async {
-                      final qs = await editVoteQuestions(context, pr.voteQuestions);
+                      final qs = await editVoteQuestions(context, pr.voteQuestions,
+                          owner: t.ownerId);
                       if (qs == null || !mounted) return;
-                      await _run(() => _repo.setVoteQuestions(code, pr.n, qs));
+                      await _run(() => _repo.setVoteQuestions(code, pr.n, qs, owner: t.ownerId));
                     },
               icon: const Icon(Icons.how_to_vote, size: 18),
               label: Text(pr == null || pr.voteQuestions.isEmpty
@@ -928,7 +929,7 @@ class _TournamentScreenState extends State<TournamentScreen> {
         for (final p in players.values)
           if (p.rosterKey != null) p.rosterKey!,
       };
-      final pick = await pickRosterPlayer(context, inTournament);
+      final pick = await pickRosterPlayer(context, inTournament, owner: t.ownerId);
       if (pick == null || !mounted) return;
       var nick = pick.nick;
       var deck = const DeckInfo();

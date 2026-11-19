@@ -6,20 +6,24 @@ import '../widgets/common.dart';
 
 /// Mantenedor de preguntas de votación especial (ej. "Baraja más original").
 class VoteQuestionsScreen extends StatefulWidget {
-  const VoteQuestionsScreen({super.key});
+  /// null = mis preguntas; 'g_{id}' = preguntas de un grupo.
+  final String? owner;
+  final String title;
+  const VoteQuestionsScreen(
+      {super.key, this.owner, this.title = 'Preguntas de votación'});
   @override
   State<VoteQuestionsScreen> createState() => _VoteQuestionsScreenState();
 }
 
 class _VoteQuestionsScreenState extends State<VoteQuestionsScreen> {
   final _new = TextEditingController();
-  late final Stream<List<String>> _stream = Repo.i.voteQuestions();
+  late final Stream<List<String>> _stream = Repo.i.voteQuestions(owner: widget.owner);
 
   Future<void> _add() async {
     final q = _new.text.trim();
     if (q.isEmpty) return;
     _new.clear();
-    await guard(context, () => Repo.i.saveVoteQuestions([q]));
+    await guard(context, () => Repo.i.saveVoteQuestions([q], owner: widget.owner));
   }
 
   Future<void> _edit(String q) async {
@@ -43,13 +47,13 @@ class _VoteQuestionsScreenState extends State<VoteQuestionsScreen> {
       ),
     );
     if (v == null || v.isEmpty || v == q || !mounted) return;
-    await guard(context, () => Repo.i.renameVoteQuestion(q, v));
+    await guard(context, () => Repo.i.renameVoteQuestion(q, v, owner: widget.owner));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Preguntas de votación')),
+      appBar: AppBar(title: Text(widget.title)),
       body: StreamBuilder<List<String>>(
         stream: _stream,
         builder: (context, snap) {
@@ -91,7 +95,7 @@ class _VoteQuestionsScreenState extends State<VoteQuestionsScreen> {
                       if (await confirmDialog(context, '¿Borrar "$q"?',
                               ok: 'Borrar') &&
                           context.mounted) {
-                        await guard(context, () => Repo.i.forgetVoteQuestion(q));
+                        await guard(context, () => Repo.i.forgetVoteQuestion(q, owner: widget.owner));
                       }
                     },
                   ),

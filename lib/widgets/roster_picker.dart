@@ -13,23 +13,25 @@ class RosterPick {
 
 /// Elige un jugador del mantenedor para agregarlo al torneo, o crea uno nuevo.
 Future<RosterPick?> pickRosterPlayer(
-    BuildContext context, Set<String> alreadyIn) {
+    BuildContext context, Set<String> alreadyIn, {String? owner}) {
   return showDialog<RosterPick>(
     context: context,
-    builder: (c) => _RosterPicker(alreadyIn: alreadyIn),
+    builder: (c) => _RosterPicker(alreadyIn: alreadyIn, owner: owner),
   );
 }
 
 class _RosterPicker extends StatefulWidget {
   final Set<String> alreadyIn;
-  const _RosterPicker({required this.alreadyIn});
+  final String? owner;
+  const _RosterPicker({required this.alreadyIn, this.owner});
   @override
   State<_RosterPicker> createState() => _RosterPickerState();
 }
 
 class _RosterPickerState extends State<_RosterPicker> {
   final _q = TextEditingController();
-  late final Stream<List<RosterPerson>> _stream = Repo.i.rosterPeople();
+  late final Stream<List<RosterPerson>> _stream =
+      Repo.i.rosterPeople(owner: widget.owner);
 
   void _new() {
     final n = _q.text.trim();

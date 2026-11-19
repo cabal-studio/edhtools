@@ -23,6 +23,17 @@ service cloud.firestore {
         || (a.type == 'round' && key == base)
         || (a.type == 'unlimited' && key.matches(base + '-' + d.pid + '-[a-z0-9]+'));
     }
+    // Grupos de organizadores: groups/{id}.members incluye al dueño.
+    function groupMembers(gid) {
+      return get(/databases/$(database)/documents/groups/$(gid)).data.members;
+    }
+    // Mantenedores: los propios (rosters/{uid}) o los de un grupo al que
+    // pertenezco (rosters/g_{id}).
+    function canRoster(owner) {
+      return signedIn() && (request.auth.uid == owner
+        || (owner.matches('^g_[A-Za-z0-9]+$')
+            && request.auth.uid in groupMembers(owner.split('_')[1])));
+    }
     function seatOf(code, round) {
       return get(/databases/$(database)/documents/tournaments/$(code)/rounds/$('r' + string(round))).data.seatOf;
     }
@@ -32,15 +43,34 @@ service cloud.firestore {
       allow read, write: if signedIn() && request.auth.uid == uid;
     }
 
-    // Mantenedores (jugadores, preguntas). Hoy el dueño es el propio
-    // organizador; a futuro, una comunidad con varios organizadores.
+    // Grupos: el dueño agrega/quita miembros; los miembros registran
+    // torneos en el historial y pueden salirse.
+    match /groups/{gid} {
+      allow read: if signedIn() && request.auth.uid in resource.data.members;
+      allow create: if signedIn()
+        && request.resource.data.owner == request.auth.uid
+        && request.resource.data.members == [request.auth.uid];
+      allow update: if signedIn() && (
+        (resource.data.owner == request.auth.uid
+          && request.resource.data.owner == resource.data.owner
+          && request.auth.uid in request.resource.data.members)
+        || (request.auth.uid in resource.data.members
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tournaments']))
+        || (request.auth.uid in resource.data.members
+          && request.auth.uid != resource.data.owner
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members'])
+          && request.resource.data.members.toSet() == resource.data.members.toSet().difference([request.auth.uid].toSet())));
+      allow delete: if signedIn() && resource.data.owner == request.auth.uid;
+    }
+
+    // Mantenedores (jugadores, preguntas, logros): propios o de un grupo.
     match /rosters/{owner} {
-      allow read, write: if signedIn() && request.auth.uid == owner;
+      allow read, write: if canRoster(owner);
       match /people/{id} {
-        allow read, write: if signedIn() && request.auth.uid == owner;
+        allow read, write: if canRoster(owner);
       }
       match /achievements/{id} {
-        allow read, write: if signedIn() && request.auth.uid == owner;
+        allow read, write: if canRoster(owner);
       }
     }
     // Cada persona puede leer las fichas vinculadas a su cuenta en cualquier
@@ -64,7 +94,8 @@ service cloud.firestore {
       allow list: if false;
       allow create: if signedIn()
         && code.matches('^[A-Z0-9]{6}$')
-        && request.resource.data.organizerId == request.auth.uid;
+        && request.resource.data.organizerId == request.auth.uid
+        && canRoster(request.resource.data.get('ownerId', request.auth.uid));
       // Solo el organizador modifica el torneo y no puede transferirlo.
       allow update: if signedIn()
         && resource.data.organizerId == request.auth.uid

@@ -113,7 +113,13 @@ class Tournament {
         maxScores = asInt(m['maxScores']),
         shareAchievements = shareModeFrom(m['shareAchievements']),
         createdAt = asInt(m['createdAt']),
-        date = m['date'] is num ? asInt(m['date']) : null;
+        date = m['date'] is num ? asInt(m['date']) : null,
+        groupId = m['groupId'] as String?,
+        groupName = m['groupName'] as String?;
+
+  /// Grupo de organizadores con el que se creó (null = individual).
+  final String? groupId;
+  final String? groupName;
 
   bool get asksDeck =>
       commanderField != FieldMode.off || deckListField != FieldMode.off;
@@ -212,6 +218,34 @@ class RosterPerson {
   int get tournamentCount => tournaments.map((t) => t.code).toSet().length;
 }
 
+/// Grupo de organizadores: tiene mantenedores propios (rosters/g_{id}) e
+/// historial de torneos. El dueño agrega o quita miembros.
+class Group {
+  final String id;
+  final String name;
+  final String ownerUid;
+  final List<String> members;
+  final Map<String, String> names;
+  final List<MyTournamentRef> tournaments;
+  final int createdAt;
+  Group.fromMap(this.id, Map<String, dynamic> m)
+      : name = (m['name'] as String?) ?? 'Grupo',
+        ownerUid = (m['owner'] as String?) ?? '',
+        members = List<String>.from(m['members'] ?? const []),
+        names = Map<String, String>.from(m['names'] ?? const {}),
+        tournaments = ((m['tournaments'] as List?) ?? const [])
+            .map((e) => Map<String, dynamic>.from(e))
+            .map((x) => MyTournamentRef('${x['code']}', '${x['name']}'))
+            .toList()
+            .reversed
+            .toList(),
+        createdAt = asInt(m['createdAt']);
+
+  /// Dueño de los mantenedores del grupo (rosters/{owner}).
+  String get owner => 'g_$id';
+  String nameOf(String uid) => names[uid] ?? 'Miembro';
+}
+
 /// Acceso a Firestore. Estructura:
 ///  tournaments/{CODE}                         configuración y estado
 ///  tournaments/{CODE}/players/{pid}           nick, uid, drop
@@ -240,11 +274,15 @@ class Repo {
 
   /// Dueño de los mantenedores. Hoy es el propio organizador; a futuro podrá
   /// ser una comunidad de organizadores (rosters/{comunidad}).
+  /// [owner] null = mis propios mantenedores; 'g_{id}' = los de un grupo.
   String get ownerId => uid;
-  DocumentReference<Map<String, dynamic>> get ownerDoc =>
-      _db.doc('rosters/$ownerId');
-  CollectionReference<Map<String, dynamic>> get people =>
-      _db.collection('rosters/$ownerId/people');
+  String _o(String? owner) => owner ?? uid;
+  DocumentReference<Map<String, dynamic>> ownerDocOf(String? owner) =>
+      _db.doc('rosters/${_o(owner)}');
+  CollectionReference<Map<String, dynamic>> peopleOf(String? owner) =>
+      _db.collection('rosters/${_o(owner)}/people');
+  DocumentReference<Map<String, dynamic>> get ownerDoc => ownerDocOf(null);
+  CollectionReference<Map<String, dynamic>> get people => peopleOf(null);
 
   // ---------- lecturas en vivo ----------
   Stream<Tournament?> tournament(String code) => tDoc(code)
@@ -341,6 +379,7 @@ class Repo {
     ShareMode shareDecks = ShareMode.end,
     ShareMode shareVotes = ShareMode.never,
     int? date,
+    Group? group,
     Map<String, dynamic> extra = const {},
   }) async {
     for (var attempt = 0; attempt < 8; attempt++) {
@@ -356,7 +395,9 @@ class Repo {
           'code': code,
           'name': name,
           'organizerId': uid,
-          'ownerId': uid,
+          'ownerId': group?.owner ?? uid,
+          'groupId': group?.id,
+          'groupName': group?.name,
           'rounds': rounds,
           'roundMinutes': roundMinutes,
           'pts': pts.toMap(),
@@ -376,6 +417,13 @@ class Repo {
       });
       if (created) {
         await _remember('organized', code, name);
+        if (group != null) {
+          await groupDoc(group.id).update({
+            'tournaments': FieldValue.arrayUnion([
+              {'code': code, 'name': name}
+            ])
+          });
+        }
         return code;
       }
     }
@@ -473,24 +521,27 @@ class Repo {
       roundDoc(code, n)
           .update({'tables': tables.map((x) => x.toMap()).toList()});
 
-  Future<void> setVoteQuestions(String code, int n, List<String> qs) async {
+  Future<void> setVoteQuestions(String code, int n, List<String> qs,
+      {String? owner}) async {
     await roundDoc(code, n).update({'voteQuestions': qs});
-    if (qs.isNotEmpty) await saveVoteQuestions(qs);
+    if (qs.isNotEmpty) await saveVoteQuestions(qs, owner: owner);
   }
 
   /// Preguntas guardadas del dueño (incluye las de la versión anterior,
   /// que se guardaban en users/{uid}).
-  Stream<List<String>> voteQuestions() {
+  Stream<List<String>> voteQuestions({String? owner}) {
+    final personal = _o(owner) == uid;
     late StreamController<List<String>> ctrl;
     List<String> a = const [], b = const [];
     StreamSubscription? s1, s2;
     void emit() => ctrl.add({...a, ...b}.toList()..sort());
     ctrl = StreamController<List<String>>(
       onListen: () {
-        s1 = ownerDoc.snapshots().listen((d) {
+        s1 = ownerDocOf(owner).snapshots().listen((d) {
           a = List<String>.from(d.data()?['voteQuestions'] ?? const []);
           emit();
         }, onError: ctrl.addError);
+        if (!personal) return;
         s2 = meDoc.snapshots().listen((d) {
           b = List<String>.from(d.data()?['voteQuestions'] ?? const []);
           emit();
@@ -504,23 +555,25 @@ class Repo {
     return ctrl.stream;
   }
 
-  Future<void> saveVoteQuestions(List<String> qs) => ownerDoc.set({
-        'ownerId': ownerId,
+  Future<void> saveVoteQuestions(List<String> qs, {String? owner}) =>
+      ownerDocOf(owner).set({
+        'ownerId': _o(owner),
         'voteQuestions': FieldValue.arrayUnion(qs),
       }, SetOptions(merge: true));
 
-  Future<void> forgetVoteQuestion(String q) async {
-    await ownerDoc.set({
+  Future<void> forgetVoteQuestion(String q, {String? owner}) async {
+    await ownerDocOf(owner).set({
       'voteQuestions': FieldValue.arrayRemove([q])
     }, SetOptions(merge: true));
+    if (_o(owner) != uid) return;
     await meDoc.set({
       'voteQuestions': FieldValue.arrayRemove([q])
     }, SetOptions(merge: true));
   }
 
-  Future<void> renameVoteQuestion(String from, String to) async {
-    await forgetVoteQuestion(from);
-    await saveVoteQuestions([to]);
+  Future<void> renameVoteQuestion(String from, String to, {String? owner}) async {
+    await forgetVoteQuestion(from, owner: owner);
+    await saveVoteQuestions([to], owner: owner);
   }
 
   /// Preparación → ronda en juego (arranca el reloj). En liga entrega los
@@ -712,9 +765,11 @@ class Repo {
     required int maxScores,
     required ShareMode shareAchievements,
     int? date,
+    Group? group,
   }) =>
       createTournament(
         date: date,
+        group: group,
         name: name,
         rounds: 0,
         roundMinutes: roundMinutes,
@@ -948,32 +1003,36 @@ class Repo {
       {'status': 'finished', 'timerEnds': null, 'timerPaused': null});
 
   // ---------- catálogo de logros (mantenedor) ----------
-  CollectionReference<Map<String, dynamic>> get achCatalog =>
-      _db.collection('rosters/$ownerId/achievements');
+  CollectionReference<Map<String, dynamic>> achCatalogOf(String? owner) =>
+      _db.collection('rosters/${_o(owner)}/achievements');
 
-  Stream<List<Achievement>> achievementCatalog() => achCatalog.snapshots().map(
+  Stream<List<Achievement>> achievementCatalog({String? owner}) =>
+      achCatalogOf(owner).snapshots().map(
       (q) => q.docs.map((d) => Achievement.fromMap(d.id, d.data())).toList()
         ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase())));
 
-  Future<void> saveAchievement(Achievement a) =>
-      achCatalog.doc(a.id).set({...a.toMap(), 'updatedAt': now});
+  Future<void> saveAchievement(Achievement a, {String? owner}) =>
+      achCatalogOf(owner).doc(a.id).set({...a.toMap(), 'updatedAt': now});
 
-  Future<void> deleteAchievement(String id) => achCatalog.doc(id).delete();
+  Future<void> deleteAchievement(String id, {String? owner}) =>
+      achCatalogOf(owner).doc(id).delete();
 
-  Future<void> importAchievements(List<Achievement> list) async {
+  Future<void> importAchievements(List<Achievement> list, {String? owner}) async {
     final b = _db.batch();
     for (final a in list) {
-      b.set(achCatalog.doc(a.id), {...a.toMap(), 'updatedAt': now});
+      b.set(achCatalogOf(owner).doc(a.id), {...a.toMap(), 'updatedAt': now});
     }
     await b.commit();
   }
 
   // ---------- mantenedor de jugadores ----------
-  Stream<List<RosterPerson>> rosterPeople() => people.snapshots().map((q) =>
+  Stream<List<RosterPerson>> rosterPeople({String? owner}) =>
+      peopleOf(owner).snapshots().map((q) =>
       q.docs.map((d) => RosterPerson.fromMap(d.id, d.data())).toList()
         ..sort((a, b) => a.nick.toLowerCase().compareTo(b.nick.toLowerCase())));
 
-  Stream<RosterPerson?> rosterPerson(String id) => people
+  Stream<RosterPerson?> rosterPerson(String id, {String? owner}) =>
+      peopleOf(owner)
       .doc(id)
       .snapshots()
       .map((d) => d.exists ? RosterPerson.fromMap(d.id, d.data()!) : null);
@@ -987,6 +1046,7 @@ class Repo {
   ///  * sin [rosterId]: jugador nuevo; se crea su ficha manual.
   Future<String> addPlayerFromRoster(Tournament t, String nick,
       {String? rosterId, DeckInfo deck = const DeckInfo()}) async {
+    final people = peopleOf(t.ownerId);
     String? rid = rosterId;
     final ts = now;
     if (rid == null) {
@@ -1032,6 +1092,7 @@ class Repo {
   /// organizador lo ejecuta al abrir su torneo). Los jugadores con app usan
   /// su uid como ficha; los manuales antiguos reciben una ficha nueva.
   Future<void> syncRoster(Tournament t, Map<String, PlayerData> ps) async {
+    final people = peopleOf(t.ownerId);
     for (final p in ps.values) {
       final key = '${t.code}/${p.id}/${p.nick}/${p.google}';
       if (_synced.contains(key)) continue;
@@ -1066,13 +1127,15 @@ class Repo {
     }
   }
 
-  Future<void> renameRosterPerson(String id, String nick) =>
-      people.doc(id).update({'nick': nick, 'updatedAt': now});
+  Future<void> renameRosterPerson(String id, String nick, {String? owner}) =>
+      peopleOf(owner).doc(id).update({'nick': nick, 'updatedAt': now});
 
   /// Fusiona una ficha manual con la de una cuenta de la app (idealmente
   /// Google): sus torneos pasan a la cuenta, que podrá verlos en su
   /// historial, y la ficha manual se elimina.
-  Future<void> mergeRosterPeople(RosterPerson manual, RosterPerson target) async {
+  Future<void> mergeRosterPeople(RosterPerson manual, RosterPerson target,
+      {String? owner}) async {
+    final people = peopleOf(owner);
     final targetUid = target.uid;
     if (!manual.isManual || targetUid == null) {
       throw Exception('Solo se puede fusionar una ficha manual con una cuenta de la app');
@@ -1196,5 +1259,95 @@ class Repo {
         'round': round,
         'picks': picks,
         'at': now,
+      });
+
+  // ---------- grupos de organizadores ----------
+  DocumentReference<Map<String, dynamic>> groupDoc(String id) =>
+      _db.doc('groups/$id');
+
+  Stream<List<Group>> myGroups() => _db
+      .collection('groups')
+      .where('members', arrayContains: uid)
+      .snapshots()
+      .map((q) => q.docs.map((d) => Group.fromMap(d.id, d.data())).toList()
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase())));
+
+  Stream<Group?> group(String id) => groupDoc(id)
+      .snapshots()
+      .map((d) => d.exists ? Group.fromMap(d.id, d.data()!) : null);
+
+  /// Crea el grupo (yo como dueño) y duplica mis mantenedores: jugadores,
+  /// preguntas y logros. El historial del grupo parte vacío.
+  Future<String> createGroup(String name, String myName) async {
+    final ref = _db.collection('groups').doc();
+    await ref.set({
+      'name': name,
+      'owner': uid,
+      'members': [uid],
+      'names': {uid: myName.isEmpty ? 'Dueño' : myName},
+      'tournaments': [],
+      'createdAt': now,
+    });
+    final dest = 'g_${ref.id}';
+    final mine = await ownerDoc.get();
+    final me = await meDoc.get();
+    final qs = {
+      ...List<String>.from(mine.data()?['voteQuestions'] ?? const []),
+      ...List<String>.from(me.data()?['voteQuestions'] ?? const []),
+    }.toList();
+    await ownerDocOf(dest).set({
+      'ownerId': dest,
+      'groupId': ref.id,
+      'voteQuestions': qs,
+    });
+    final ps = await people.get();
+    final achs = await achCatalogOf(null).get();
+    final writes = <(DocumentReference<Map<String, dynamic>>, Map<String, dynamic>)>[
+      for (final d in ps.docs)
+        (
+          peopleOf(dest).doc(d.id),
+          {
+            ...d.data(),
+            'tournaments': [],
+            'mergedFrom': [],
+            'copiedAt': now,
+          }
+        ),
+      for (final d in achs.docs) (achCatalogOf(dest).doc(d.id), d.data()),
+    ];
+    for (var i = 0; i < writes.length; i += 400) {
+      final b = _db.batch();
+      for (final w in writes.skip(i).take(400)) {
+        b.set(w.$1, w.$2);
+      }
+      await b.commit();
+    }
+    return ref.id;
+  }
+
+  Future<void> renameGroup(String id, String name) =>
+      groupDoc(id).update({'name': name});
+
+  /// Solo jugadores con cuenta de la app (uid) pueden ser miembros.
+  Future<void> addGroupMember(String id, RosterPerson p) {
+    final u = p.uid;
+    if (u == null) {
+      throw Exception('Solo se pueden agregar jugadores con cuenta (Google o app).');
+    }
+    return groupDoc(id).update({
+      'members': FieldValue.arrayUnion([u]),
+      'names.$u': p.nick,
+    });
+  }
+
+  Future<void> removeGroupMember(String id, String memberUid) =>
+      groupDoc(id).update({
+        'members': FieldValue.arrayRemove([memberUid]),
+        'names.$memberUid': FieldValue.delete(),
+      });
+
+  /// Un miembro (no dueño) se retira del grupo.
+  Future<void> leaveGroup(String id) => groupDoc(id).update({
+        'members': FieldValue.arrayRemove([uid]),
       });
 }

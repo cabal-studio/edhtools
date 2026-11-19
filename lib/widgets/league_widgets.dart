@@ -89,14 +89,16 @@ class TiebreakEditor extends StatelessWidget {
 class AchievementSelector extends StatefulWidget {
   final List<Achievement> selected;
   final ValueChanged<List<Achievement>> onChanged;
+  final String? owner;
   const AchievementSelector(
-      {super.key, required this.selected, required this.onChanged});
+      {super.key, required this.selected, required this.onChanged, this.owner});
   @override
   State<AchievementSelector> createState() => _AchievementSelectorState();
 }
 
 class _AchievementSelectorState extends State<AchievementSelector> {
-  late final Stream<List<Achievement>> _stream = Repo.i.achievementCatalog();
+  late final Stream<List<Achievement>> _stream =
+      Repo.i.achievementCatalog(owner: widget.owner);
 
   @override
   Widget build(BuildContext context) {

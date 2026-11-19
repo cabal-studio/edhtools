@@ -11,20 +11,23 @@ import '../widgets/common.dart';
 
 /// Mantenedor de logros para las ligas: manual o carga desde CSV.
 class AchievementsScreen extends StatefulWidget {
-  const AchievementsScreen({super.key});
+  /// null = mi catálogo; 'g_{id}' = catálogo de un grupo.
+  final String? owner;
+  final String title;
+  const AchievementsScreen({super.key, this.owner, this.title = 'Logros'});
   @override
   State<AchievementsScreen> createState() => _AchievementsScreenState();
 }
 
 class _AchievementsScreenState extends State<AchievementsScreen> {
-  late final Stream<List<Achievement>> _stream = Repo.i.achievementCatalog();
+  late final Stream<List<Achievement>> _stream = Repo.i.achievementCatalog(owner: widget.owner);
   List<Achievement> _current = const [];
 
   Future<void> _edit([Achievement? a]) async {
     final res = await editAchievementDialog(context, a,
         taken: _current.map((x) => x.id).toSet());
     if (res == null || !mounted) return;
-    await guard(context, () => Repo.i.saveAchievement(res));
+    await guard(context, () => Repo.i.saveAchievement(res, owner: widget.owner));
   }
 
   Future<void> _importCsv() async {
@@ -45,7 +48,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
       ok: 'Importar',
     );
     if (!ok || !mounted) return;
-    await guard(context, () => Repo.i.importAchievements(r.items));
+    await guard(context, () => Repo.i.importAchievements(r.items, owner: widget.owner));
     if (mounted) toast(context, '${r.items.length} logro(s) importados');
   }
 
@@ -53,7 +56,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Logros'),
+        title: Text(widget.title),
         actions: [
           IconButton(
             tooltip: 'Copiar como CSV',
@@ -112,7 +115,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                               ok: 'Borrar') &&
                           context.mounted) {
                         await guard(
-                            context, () => Repo.i.deleteAchievement(a.id));
+                            context, () => Repo.i.deleteAchievement(a.id, owner: widget.owner));
                       }
                     },
                   ),

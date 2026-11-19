@@ -52,7 +52,11 @@ class _TournamentTileState extends State<TournamentTile> {
             title: Text(t?.name ?? widget.ref.name),
             subtitle: Text(t == null
                 ? 'Cargando…'
-                : [fmtDate(t.eventDate), statusLabel(t)]
+                : [
+                    fmtDate(t.eventDate),
+                    statusLabel(t),
+                    if (t.groupName != null) 'Grupo ${t.groupName}',
+                  ]
                     .where((x) => x.isNotEmpty)
                     .join(' · ')),
             trailing: Text(widget.ref.code,
