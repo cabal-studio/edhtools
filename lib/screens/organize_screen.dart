@@ -49,8 +49,8 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
     setState(() => _busy = true);
     await guard(context, () async {
       final pts = Points(
-        win: _n(_win, 5),
-        draw: _n(_draw, 1),
+        win: _n(_win, _league ? 0 : 5),
+        draw: _n(_draw, _league ? 0 : 1),
         loss: _n(_loss, 0),
         p2: _n(_p2, 0),
         p3: _n(_p3, 0),
@@ -177,7 +177,13 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
                           label: Text('Liga')),
                     ],
                     selected: {_league},
-                    onSelectionChanged: (v) => setState(() => _league = v.first),
+                    onSelectionChanged: (v) => setState(() {
+                      _league = v.first;
+                      // Liga: victoria/empate/derrota parten en 0.
+                      _win.text = _league ? '0' : '5';
+                      _draw.text = _league ? '0' : '1';
+                      _loss.text = '0';
+                    }),
                   ),
                   if (_league)
                     const Padding(

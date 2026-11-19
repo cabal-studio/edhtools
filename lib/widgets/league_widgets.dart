@@ -341,48 +341,104 @@ class RoundClaimsAdmin extends StatelessWidget {
   }
 }
 
-/// Resumen de logros de la liga por jugador (organizador o si se comparten).
+/// Logros obtenidos: una tabla por ronda y una tabla con el total de la
+/// liga. Cada tabla muestra cuántas veces obtuvo cada logro el jugador y la
+/// suma de puntos de logros (los negativos restan).
 class AchievementsSummary extends StatelessWidget {
   final Tournament t;
   final List<LeagueStanding> standings;
+  final List<RoundData> rounds;
+  final List<Claim> claims;
   const AchievementsSummary(
-      {super.key, required this.t, required this.standings});
+      {super.key,
+      required this.t,
+      required this.standings,
+      required this.rounds,
+      required this.claims});
+
+  static String _sign(num v) => v > 0 ? '+$v' : '$v';
+
+  Widget _table(List<Achievement> achs, Iterable<Claim> cs) {
+    const hs = TextStyle(color: kMuted, fontSize: 11);
+    final counts = <String, Map<String, int>>{};
+    final pts = <String, num>{};
+    for (final c in cs) {
+      final a = t.achievements[c.ach];
+      if (a == null) continue;
+      final m = counts.putIfAbsent(c.pid, () => {});
+      m[c.ach] = (m[c.ach] ?? 0) + 1;
+      pts[c.pid] = (pts[c.pid] ?? 0) + a.points;
+    }
+    if (counts.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(12),
+        child: Text('Nadie obtuvo logros.', style: TextStyle(color: kMuted)),
+      );
+    }
+    final order = [
+      for (final s in standings)
+        if (counts.containsKey(s.id)) s,
+    ];
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: DataTable(
+        columnSpacing: 12,
+        horizontalMargin: 12,
+        headingRowHeight: 36,
+        columns: [
+          const DataColumn(label: Text('JUGADOR', style: hs)),
+          for (final a in achs)
+            DataColumn(
+                numeric: true,
+                label: Tooltip(
+                  message: '${a.description} (${_sign(a.points)} pts)',
+                  child: Text('${a.name} (${_sign(a.points)})', style: hs),
+                )),
+          const DataColumn(label: Text('PTS LOGROS', style: hs), numeric: true),
+        ],
+        rows: [
+          for (final s in order)
+            DataRow(cells: [
+              DataCell(Text(s.nick)),
+              for (final a in achs)
+                DataCell(Text('${counts[s.id]![a.id] ?? ''}')),
+              DataCell(Text(_sign(pts[s.id] ?? 0),
+                  style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: (pts[s.id] ?? 0) < 0 ? Colors.redAccent : kGoldLight))),
+            ]),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final achs = t.achievementList;
     if (achs.isEmpty) return const SizedBox.shrink();
+    final ns = rounds.map((r) => r.n).toList()..sort();
+    final inScope = claims.where((c) => ns.contains(c.round)).toList();
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       const SectionTitle('Logros obtenidos'),
-      Card(
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: DataTable(
-            columnSpacing: 12,
-            horizontalMargin: 12,
-            headingRowHeight: 36,
-            columns: [
-              const DataColumn(label: Text('JUGADOR', style: TextStyle(color: kMuted, fontSize: 11))),
-              for (final a in achs)
-                DataColumn(
-                    numeric: true,
-                    label: Tooltip(
-                      message: a.description,
-                      child: Text(a.name,
-                          style: const TextStyle(color: kMuted, fontSize: 11)),
-                    )),
-            ],
-            rows: [
-              for (final s in standings)
-                if (s.achCounts.isNotEmpty)
-                  DataRow(cells: [
-                    DataCell(Text(s.nick)),
-                    for (final a in achs)
-                      DataCell(Text('${s.achCounts[a.id] ?? ''}')),
-                  ]),
-            ],
+      for (final n in ns.reversed)
+        Card(
+          child: ExpansionTile(
+            initiallyExpanded: n == ns.last,
+            shape: const Border(),
+            title: Text('Ronda $n',
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+            children: [_table(achs, inScope.where((c) => c.round == n))],
           ),
         ),
+      Card(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: Text('Total de la liga',
+                style: TextStyle(fontWeight: FontWeight.w700, color: kGold)),
+          ),
+          _table(achs, inScope),
+        ]),
       ),
     ]);
   }

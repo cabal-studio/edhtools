@@ -90,6 +90,18 @@ void main() {
       expect(st.last.total, -2);
     });
 
+    test('quien no jugó no ocupa puestos aunque otros tengan negativo', () {
+      final r = ronda(1, {'p0': 'W', 'p1': 'L', 'p2': 'L', 'p3': 'L'});
+      final claims = [const Claim(id: '1', round: 1, pid: 'p1', ach: 'neg')];
+      final st = computeLeagueStandings(
+          rounds: [r], players: makePlayers(6), pts: pts,
+          achievements: achs, claims: claims);
+      final jugaron = st.where((s) => s.roundsPlayed > 0).toList();
+      expect(jugaron.length, 4);
+      expect(jugaron.map((s) => s.rank), [1, 2, 3, 4]);
+      expect(st.firstWhere((s) => s.id == 'p1').rank, 4);
+    });
+
     test('puntajes máximos: mejores N rondas', () {
       final ps = makePlayers(4);
       final rounds = [

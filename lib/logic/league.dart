@@ -394,6 +394,10 @@ List<LeagueStanding> computeLeagueStandings({
   int cmp(num a, num b) => (b - a).abs() < 1e-9 ? 0 : (b > a ? 1 : -1);
   final out = st.values.toList()
     ..sort((a, b) {
+      // Quien no ha jugado ninguna ronda va al final (no ocupa puestos).
+      if (rounds.isNotEmpty && (a.roundsPlayed > 0) != (b.roundsPlayed > 0)) {
+        return a.roundsPlayed > 0 ? -1 : 1;
+      }
       final c = cmp(a.total, b.total);
       if (c != 0) return c;
       for (final k in tiebreakers) {

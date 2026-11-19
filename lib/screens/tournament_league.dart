@@ -550,7 +550,7 @@ extension _LeagueUI on _TournamentScreenState {
         ),
       ),
       if (t.achievementsOn && _seeAllClaims)
-        AchievementsSummary(t: t, standings: st),
+        AchievementsSummary(t: t, standings: st, rounds: rs, claims: claims),
       if (t.achievementsOn && isOrg && t.shareAchievements != ShareMode.always)
         Text(
             t.shareAchievements == ShareMode.end
