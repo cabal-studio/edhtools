@@ -17,12 +17,17 @@ class PrepEditor extends StatefulWidget {
   final Map<String, num> points;
   final void Function(List<TableData> tables, List<String> byes) onChanged;
 
+  /// Quiénes deben tener mesa (liga: los inscritos en la ronda). Null = todos
+  /// los jugadores sin drop.
+  final Set<String>? eligible;
+
   const PrepEditor({
     super.key,
     required this.round,
     required this.players,
     required this.points,
     required this.onChanged,
+    this.eligible,
   });
 
   @override
@@ -178,7 +183,10 @@ class _PrepEditorState extends State<PrepEditor> {
   Widget build(BuildContext context) {
     final seated = r.seated;
     final unseated = widget.players.values
-        .where((p) => !p.dropped && !seated.contains(p.id))
+        .where((p) =>
+            !p.dropped &&
+            !seated.contains(p.id) &&
+            (widget.eligible == null || widget.eligible!.contains(p.id)))
         .map((p) => p.id)
         .toList();
     final nextTable = r.tables.length + 1;

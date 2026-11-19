@@ -6,14 +6,18 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../data/repo.dart';
+import '../logic/league.dart';
 import '../logic/swiss.dart';
 import '../ui/theme.dart';
 import '../widgets/common.dart';
+import '../widgets/league_widgets.dart';
 import '../widgets/player_dialog.dart';
 import '../widgets/prep_editor.dart';
 import '../widgets/roster_picker.dart';
 import '../widgets/table_card.dart';
 import '../widgets/votes.dart';
+
+part 'tournament_league.dart';
 
 class TournamentScreen extends StatefulWidget {
   final String code;
@@ -36,7 +40,11 @@ class _TournamentScreenState extends State<TournamentScreen> {
   final _repo = Repo.i;
   final _subs = <StreamSubscription>[];
   StreamSubscription? _decksSub, _votesSub, _myDeckSub;
-  bool _decksAll = false, _votesAll = false;
+  StreamSubscription? _claimsSub, _myClaimsSub, _entriesSub;
+  bool _decksAll = false, _votesAll = false, _claimsAll = false;
+  List<Claim> claims = [];
+  List<Claim> myClaims = [];
+  Map<int, Set<String>> entries = {};
 
   Tournament? t;
   bool loaded = false;
@@ -69,6 +77,10 @@ class _TournamentScreenState extends State<TournamentScreen> {
   List<RoundData> get confirmed =>
       roundList.where((r) => r.confirmed).toList();
   String nick(String id) => players[id]?.nick ?? '¿?';
+
+  void _set(VoidCallback f) {
+    if (mounted) setState(f);
+  }
 
   void _onErr(Object e) {
     if (mounted) toast(context, 'Error de conexión: $e');
@@ -135,6 +147,26 @@ class _TournamentScreenState extends State<TournamentScreen> {
           : null;
       if (!wantVotes) votes = [];
     }
+    if (tt.isLeague) {
+      _entriesSub ??= _repo.entries(code).listen(
+          (v) => _set(() => entries = v),
+          onError: (_) {});
+      final wantClaims = tt.canSee(tt.shareAchievements, isOrg);
+      if (wantClaims != _claimsAll || _claimsSub == null) {
+        _claimsSub?.cancel();
+        _claimsAll = wantClaims;
+        _claimsSub = wantClaims
+            ? _repo.claims(code).listen((v) => _set(() => claims = v),
+                onError: (_) {})
+            : null;
+        if (!wantClaims) claims = [];
+      }
+      if (_myClaimsSub == null && myPid != null && myPid == uid) {
+        _myClaimsSub = _repo.myClaims(code, uid).listen(
+            (v) => _set(() => myClaims = v),
+            onError: (_) {});
+      }
+    }
   }
 
   @override
@@ -145,6 +177,9 @@ class _TournamentScreenState extends State<TournamentScreen> {
     _decksSub?.cancel();
     _votesSub?.cancel();
     _myDeckSub?.cancel();
+    _claimsSub?.cancel();
+    _myClaimsSub?.cancel();
+    _entriesSub?.cancel();
     super.dispose();
   }
 
@@ -187,7 +222,9 @@ class _TournamentScreenState extends State<TournamentScreen> {
       _Tab.tables => _tables(t),
       _Tab.standing => _standing(t),
       _Tab.players => _players(t),
-      _Tab.settings => _SettingsForm(t: t),
+      _Tab.settings => t.isLeague
+          ? _LeagueSettingsForm(t: t, rounds: rounds, claims: claims)
+          : _SettingsForm(t: t),
     };
 
     return Scaffold(
@@ -227,6 +264,12 @@ class _TournamentScreenState extends State<TournamentScreen> {
   Widget _header(Tournament t) {
     final active = players.values.where((p) => !p.dropped).length;
     final (label, color) = switch (t.status) {
+      'between' => (
+          t.currentRound == 0 ? 'Liga · sin rondas' : 'Liga · entre rondas',
+          kBlue
+        ),
+      'registration' when t.isLeague =>
+        ('Inscripción ronda ${t.currentRound}', kBlue),
       'registration' => ('Inscripción', kBlue),
       'prep' => ('Preparando ronda ${t.currentRound}', kGold),
       'round' => ('Ronda ${t.currentRound}', kOk),
@@ -282,7 +325,9 @@ class _TournamentScreenState extends State<TournamentScreen> {
                           fontWeight: FontWeight.w600)),
                 ),
                 Text(
-                    '$active jugadores · ${t.rounds} rondas · ${t.roundMinutes} min',
+                    t.isLeague
+                        ? '$active jugadores · Liga · ${t.roundMinutes} min por ronda'
+                        : '$active jugadores · ${t.rounds} rondas · ${t.roundMinutes} min',
                     style: const TextStyle(color: kMuted, fontSize: 12.5)),
               ]),
         ]),
@@ -315,6 +360,7 @@ class _TournamentScreenState extends State<TournamentScreen> {
   }
 
   Widget _orgPanel(Tournament t) {
+    if (t.isLeague) return _leaguePanel(t);
     final children = <Widget>[];
     final backBtn = Align(
       alignment: Alignment.centerLeft,
@@ -409,7 +455,7 @@ class _TournamentScreenState extends State<TournamentScreen> {
                         !mounted) {
                       return;
                     }
-                    await _run(() => _repo.startRound(t));
+                    await _run(() => _repo.startRound(t, round: pr));
                   },
             icon: const Icon(Icons.play_arrow),
             label: Text('Empezar ronda ${t.currentRound}'),
@@ -490,8 +536,9 @@ class _TournamentScreenState extends State<TournamentScreen> {
   }
 
   // ------------------------------------------------------------------ mesas
-  Map<String, num> _totalsBefore(int n) => pointsBy(
-      confirmed.where((x) => x.n < n).toList(), players, t!.pts);
+  Map<String, num> _totalsBefore(int n) => t!.isLeague
+      ? _leagueTotalsBefore(n)
+      : pointsBy(confirmed.where((x) => x.n < n).toList(), players, t!.pts);
 
   Widget _tableCard(Tournament t, RoundData r, TableData tb, TableMode mode) {
     final key = 'r${r.n}-t${tb.t}';
@@ -566,7 +613,11 @@ class _TournamentScreenState extends State<TournamentScreen> {
   }
 
   Widget _tables(Tournament t) {
-    if (t.status == 'registration') {
+    if (t.isLeague) {
+      final head = _leagueTablesHead(t);
+      if (head != null) return head;
+    }
+    if (t.status == 'registration' && !t.isLeague) {
       return const EmptyCard(
           'Las mesas aparecerán cuando el organizador cierre las inscripciones.');
     }
@@ -582,6 +633,7 @@ class _TournamentScreenState extends State<TournamentScreen> {
         out.add(PrepEditor(
           round: r,
           players: players,
+          eligible: t.isLeague ? (entries[n] ?? const <String>{}) : null,
           points: _totalsBefore(n),
           onChanged: (tables, byes) =>
               _run(() => _repo.saveRoundTables(t, rounds, r, tables, byes)),
@@ -597,6 +649,17 @@ class _TournamentScreenState extends State<TournamentScreen> {
     final editable = isOrg && isCurrent && t.status == 'round';
     for (final tb in r.tables) {
       out.add(_tableCard(t, r, tb, editable ? TableMode.org : TableMode.view));
+    }
+    if (t.isLeague &&
+        t.achievementsOn &&
+        _seeAllClaims &&
+        (r.confirmed || (isCurrent && t.status == 'round'))) {
+      out.add(RoundClaimsAdmin(
+          t: t,
+          round: r,
+          players: players,
+          claims: claims,
+          editable: isOrg && (isCurrent && t.status == 'round')));
     }
     if (r.byes.isNotEmpty) {
       out.add(Card(
@@ -629,20 +692,36 @@ class _TournamentScreenState extends State<TournamentScreen> {
     final p = players[me]!;
     final out = <Widget>[];
 
-    final st = confirmed.isEmpty
-        ? null
-        : _firstOrNull(computeStandings(confirmed, players, t.pts)
-            .where((s) => s.id == me));
-    out.add(Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          Stat('Tu posición', st == null ? '–' : '#${st.rank}'),
-          Stat('Puntos', '${st?.pts ?? 0}'),
-          Stat('OMW%', st == null ? '–' : fmtPct(st.omw)),
-        ]),
-      ),
-    ));
+    if (t.isLeague) {
+      final ls = confirmed.isEmpty
+          ? null
+          : _firstOrNull(_leagueStandings(confirmed).where((s) => s.id == me));
+      out.add(Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Stat('Tu posición', ls == null ? '–' : '#${ls.rank}'),
+            Stat('Puntos', '${ls?.total ?? 0}'),
+            Stat('Rondas', '${ls?.roundsPlayed ?? 0}'),
+          ]),
+        ),
+      ));
+    } else {
+      final st = confirmed.isEmpty
+          ? null
+          : _firstOrNull(computeStandings(confirmed, players, t.pts)
+              .where((s) => s.id == me));
+      out.add(Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Stat('Tu posición', st == null ? '–' : '#${st.rank}'),
+            Stat('Puntos', '${st?.pts ?? 0}'),
+            Stat('OMW%', st == null ? '–' : fmtPct(st.omw)),
+          ]),
+        ),
+      ));
+    }
 
     // Datos del jugador y baraja
     out.add(Card(
@@ -659,6 +738,10 @@ class _TournamentScreenState extends State<TournamentScreen> {
       ),
     ));
 
+    if (t.isLeague && !p.dropped) {
+      out.addAll(_leagueMine(t, me));
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: out);
+    }
     if (p.dropped) {
       out.add(const EmptyCard('Abandonaste el torneo.'));
     } else if (t.status == 'registration') {
@@ -717,6 +800,7 @@ class _TournamentScreenState extends State<TournamentScreen> {
 
   // ---------------------------------------------------------------- standing
   Widget _standing(Tournament t) {
+    if (t.isLeague) return _leagueStanding(t);
     var rs = confirmed;
     var lbl = rs.isEmpty
         ? 'Sin rondas confirmadas aún'
@@ -855,8 +939,14 @@ class _TournamentScreenState extends State<TournamentScreen> {
         nick = f.nick;
         deck = f.deck;
       }
-      await _run(() => _repo.addPlayerFromRoster(t, nick,
-          rosterId: pick.person?.id, deck: deck));
+      await _run(() async {
+        final pid = await _repo.addPlayerFromRoster(t, nick,
+            rosterId: pick.person?.id, deck: deck);
+        if (t.isLeague &&
+            (t.status == 'registration' || t.status == 'prep')) {
+          await _repo.addEntry(code, t.currentRound, pid);
+        }
+      });
     }
 
     Future<void> joinAsOrg() async {

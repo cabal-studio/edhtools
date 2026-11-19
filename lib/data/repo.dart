@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import '../logic/league.dart';
 import '../logic/swiss.dart';
 
 /// Campo de inscripción configurable por torneo.
@@ -46,6 +47,28 @@ class Tournament {
   final ShareMode shareDecks;
   final ShareMode shareVotes;
 
+  // ---- Liga ----
+  /// 'swiss' (torneo tradicional) o 'league'.
+  final String type;
+  final bool achievementsOn;
+
+  /// Logros activos en esta liga (copia del catálogo al configurarla).
+  final Map<String, Achievement> achievements;
+  final List<String> achOrder;
+  final List<String> tiebreakers;
+
+  /// Cuántos puntajes de ronda cuentan (0 = todos).
+  final int maxScores;
+  final ShareMode shareAchievements;
+
+  bool get isLeague => type == 'league';
+  List<Achievement> get achievementList => [
+        for (final id in achOrder)
+          if (achievements[id] != null) achievements[id]!,
+        for (final a in achievements.values)
+          if (!achOrder.contains(a.id)) a,
+      ];
+
   Tournament.fromMap(this.code, Map<String, dynamic> m)
       : name = (m['name'] as String?) ?? 'Torneo',
         organizerId = (m['organizerId'] as String?) ?? '',
@@ -64,7 +87,20 @@ class Tournament {
         commanderField = fieldModeFrom(m['commanderField']),
         deckListField = fieldModeFrom(m['deckListField']),
         shareDecks = shareModeFrom(m['shareDecks']),
-        shareVotes = shareModeFrom(m['shareVotes']);
+        shareVotes = shareModeFrom(m['shareVotes']),
+        type = (m['type'] as String?) ?? 'swiss',
+        achievementsOn = m['achievementsOn'] == true,
+        achievements = {
+          for (final e in Map<String, dynamic>.from(m['achievements'] ?? const {})
+              .entries)
+            e.key: Achievement.fromMap(
+                e.key, Map<String, dynamic>.from(e.value as Map))
+        },
+        achOrder = List<String>.from(m['achOrder'] ?? const []),
+        tiebreakers =
+            List<String>.from(m['tiebreakers'] ?? kDefaultTiebreakers),
+        maxScores = asInt(m['maxScores']),
+        shareAchievements = shareModeFrom(m['shareAchievements']);
 
   bool get asksDeck =>
       commanderField != FieldMode.off || deckListField != FieldMode.off;
@@ -291,13 +327,17 @@ class Repo {
     FieldMode deckListField = FieldMode.off,
     ShareMode shareDecks = ShareMode.end,
     ShareMode shareVotes = ShareMode.never,
+    Map<String, dynamic> extra = const {},
   }) async {
     for (var attempt = 0; attempt < 8; attempt++) {
       final code = _genCode();
       final ref = tDoc(code);
+      final keyRef = _db.doc('roundKeys/$code');
       final created = await _db.runTransaction((tx) async {
         final s = await tx.get(ref);
         if (s.exists) return false;
+        final k = await tx.get(keyRef);
+        if (k.exists) return false;
         tx.set(ref, {
           'code': code,
           'name': name,
@@ -315,6 +355,7 @@ class Repo {
           'shareDecks': shareDecks.name,
           'shareVotes': shareVotes.name,
           'createdAt': now,
+          ...extra,
         });
         return true;
       });
@@ -467,19 +508,31 @@ class Repo {
     await saveVoteQuestions([to]);
   }
 
-  /// Preparación → ronda en juego (arranca el reloj).
-  Future<void> startRound(Tournament t) => tDoc(t.code).update({
-        'status': 'round',
-        'timerEnds': now + t.roundMinutes * 60000,
-        'timerPaused': null,
-      });
+  /// Preparación → ronda en juego (arranca el reloj). En liga entrega los
+  /// logros automáticos.
+  Future<void> startRound(Tournament t, {RoundData? round}) async {
+    if (t.isLeague && round != null) await _grantAutoAchievements(t, round);
+    await tDoc(t.code).update({
+      'status': 'round',
+      'timerEnds': now + t.roundMinutes * 60000,
+      'timerPaused': null,
+    });
+  }
 
   /// Envía los puntos de la ronda: la confirma y prepara la siguiente
   /// (o finaliza el torneo si era la última).
   Future<void> submitPoints(Tournament t, Map<int, RoundData> rounds,
-      Map<String, PlayerData> ps) async {
+      Map<String, PlayerData> ps,
+      {List<Claim> claims = const []}) async {
     final n = t.currentRound;
     await roundDoc(t.code, n).update({'confirmed': true});
+    if (t.isLeague) {
+      final r = rounds[n];
+      if (r != null) await _storeLeagueRound(t, r, claims);
+      await tDoc(t.code).update(
+          {'status': 'between', 'timerEnds': null, 'timerPaused': null});
+      return;
+    }
     if (n >= t.rounds) {
       await tDoc(t.code).update(
           {'status': 'finished', 'timerEnds': null, 'timerPaused': null});
@@ -518,6 +571,7 @@ class Repo {
   ///  * finalizado          → ingreso de puntajes de la última ronda
   Future<void> goBack(Tournament t, Map<int, RoundData> rounds) async {
     final n = t.currentRound;
+    if (t.isLeague) return _goBackLeague(t, rounds);
     switch (t.status) {
       case 'round':
         final r = rounds[n];
@@ -558,6 +612,55 @@ class Repo {
     }
   }
 
+  /// Volver atrás en liga:
+  ///  * inscripción de ronda N → entre rondas (borra la ronda N y su clave)
+  ///  * preparación           → inscripción de la misma ronda (borra mesas)
+  ///  * ronda en juego        → preparación (borra resultados, reportes, votos y logros)
+  ///  * entre rondas          → ingreso de puntajes de la última ronda
+  ///  * finalizada            → entre rondas
+  Future<void> _goBackLeague(Tournament t, Map<int, RoundData> rounds) async {
+    final n = t.currentRound;
+    final r = rounds[n];
+    switch (t.status) {
+      case 'registration':
+        if (r?.key != null) await _db.doc('roundKeys/${r!.key}').delete();
+        await _deleteWhere(t.code, 'entries', n);
+        await roundDoc(t.code, n).delete();
+        await tDoc(t.code).update({
+          'status': 'between',
+          'currentRound': n - 1,
+          'timerEnds': null,
+          'timerPaused': null,
+        });
+      case 'prep':
+        await roundDoc(t.code, n).update(
+            {'tables': [], 'byes': [], 'repeats': 0, 'seatOf': {}});
+        await tDoc(t.code).update({'status': 'registration'});
+      case 'round':
+        if (r != null) {
+          await roundDoc(t.code, n).update({
+            'tables': r.tables
+                .map((x) => TableData(t: x.t, seats: x.seats).toMap())
+                .toList(),
+          });
+        }
+        await _deleteWhere(t.code, 'reports', n);
+        await _deleteWhere(t.code, 'votes', n);
+        await _deleteWhere(t.code, 'claims', n);
+        await tDoc(t.code).update(
+            {'status': 'prep', 'timerEnds': null, 'timerPaused': null});
+      case 'between':
+        if (n < 1) return;
+        await roundDoc(t.code, n).update({'confirmed': false});
+        await tDoc(t.code).update(
+            {'status': 'round', 'timerEnds': null, 'timerPaused': null});
+      case 'finished':
+        await tDoc(t.code).update({'status': 'between'});
+      default:
+        break;
+    }
+  }
+
   // ---------- reloj ----------
   Future<void> togglePause(Tournament t) {
     if (t.timerPaused != null) {
@@ -579,6 +682,272 @@ class Repo {
   Future<void> resetTimer(Tournament t) => tDoc(t.code).update(
       {'timerEnds': now + t.roundMinutes * 60000, 'timerPaused': null});
 
+  // ---------- liga ----------
+  Future<String> createLeague({
+    required String name,
+    required int roundMinutes,
+    required Points pts,
+    required FieldMode commanderField,
+    required FieldMode deckListField,
+    required ShareMode shareDecks,
+    required ShareMode shareVotes,
+    required bool achievementsOn,
+    required List<Achievement> achievements,
+    required List<String> tiebreakers,
+    required int maxScores,
+    required ShareMode shareAchievements,
+  }) =>
+      createTournament(
+        name: name,
+        rounds: 0,
+        roundMinutes: roundMinutes,
+        pts: pts,
+        commanderField: commanderField,
+        deckListField: deckListField,
+        shareDecks: shareDecks,
+        shareVotes: shareVotes,
+        extra: {
+          'type': 'league',
+          'status': 'between',
+          ..._leagueFields(achievementsOn, achievements, tiebreakers,
+              maxScores, shareAchievements),
+        },
+      );
+
+  Map<String, dynamic> _leagueFields(bool on, List<Achievement> achs,
+          List<String> tiebreakers, int maxScores, ShareMode share) =>
+      {
+        'achievementsOn': on,
+        'achievements': {for (final a in achs) a.id: a.toMap()},
+        'achOrder': achs.map((a) => a.id).toList(),
+        'tiebreakers': tiebreakers,
+        'maxScores': maxScores,
+        'shareAchievements': share.name,
+      };
+
+  Future<void> saveLeagueSettings(
+    Tournament t, {
+    required int minutes,
+    required Points pts,
+    required FieldMode commanderField,
+    required FieldMode deckListField,
+    required ShareMode shareDecks,
+    required ShareMode shareVotes,
+    required bool achievementsOn,
+    required List<Achievement> achievements,
+    required List<String> tiebreakers,
+    required int maxScores,
+    required ShareMode shareAchievements,
+  }) =>
+      tDoc(t.code).update({
+        'roundMinutes': minutes,
+        'pts': pts.toMap(),
+        'commanderField': commanderField.name,
+        'deckListField': deckListField.name,
+        'shareDecks': shareDecks.name,
+        'shareVotes': shareVotes.name,
+        ..._leagueFields(achievementsOn, achievements, tiebreakers, maxScores,
+            shareAchievements),
+      });
+
+  /// Busca una clave: torneo/liga (6 caracteres) o clave de ronda de liga.
+  Future<({String code, int? round})?> resolveKey(String key) async {
+    final t = await tDoc(key).get();
+    if (t.exists) return (code: key, round: null);
+    final k = await _db.doc('roundKeys/$key').get();
+    if (!k.exists) return null;
+    return (code: '${k.data()!['code']}', round: asInt(k.data()!['n']));
+  }
+
+  Future<String> _uniqueKey() async {
+    for (var i = 0; i < 8; i++) {
+      final k = _genCode();
+      final a = await tDoc(k).get();
+      if (a.exists) continue;
+      final b = await _db.doc('roundKeys/$k').get();
+      if (!b.exists) return k;
+    }
+    throw Exception('No se pudo generar una clave única');
+  }
+
+  /// Entre rondas → abre la inscripción de la ronda siguiente con su clave.
+  Future<String> openLeagueRound(Tournament t,
+      {required PairingMode pairing, int? date}) async {
+    final n = t.currentRound + 1;
+    final key = await _uniqueKey();
+    await _db.doc('roundKeys/$key').set({'code': t.code, 'n': n, 'at': now});
+    await roundDoc(t.code, n).set(RoundData(
+      n: n,
+      tables: const [],
+      key: key,
+      pairing: pairing.name,
+      date: date,
+    ).toMap());
+    await tDoc(t.code).update({
+      'status': 'registration',
+      'currentRound': n,
+      'timerEnds': null,
+      'timerPaused': null,
+    });
+    return key;
+  }
+
+  Future<void> setRoundPairing(String code, int n, PairingMode m) =>
+      roundDoc(code, n).update({'pairing': m.name});
+
+  /// Inscritos de cada ronda de liga: ronda → jugadores.
+  Stream<Map<int, Set<String>>> entries(String code) => _db
+          .collection('tournaments/$code/entries')
+          .snapshots()
+          .map((q) {
+        final out = <int, Set<String>>{};
+        for (final d in q.docs) {
+          out.putIfAbsent(asInt(d.data()['round']), () => {}).add(
+              '${d.data()['pid']}');
+        }
+        return out;
+      });
+
+  Future<void> addEntry(String code, int n, String pid) =>
+      _db.doc('tournaments/$code/entries/r$n-$pid').set(
+          {'round': n, 'pid': pid, 'at': now, 'by': uid});
+
+  Future<void> removeEntry(String code, int n, String pid) =>
+      _db.doc('tournaments/$code/entries/r$n-$pid').delete();
+
+  List<String> _leagueOrder(Tournament t, Map<int, RoundData> rounds,
+      Map<String, PlayerData> ps, List<Claim> claims) {
+    final conf = rounds.values.where((r) => r.confirmed).toList()
+      ..sort((a, b) => a.n.compareTo(b.n));
+    return computeLeagueStandings(
+      rounds: conf,
+      players: ps,
+      pts: t.pts,
+      achievements: t.achievementsOn ? t.achievements : const {},
+      claims: claims,
+      tiebreakers: t.tiebreakers,
+      maxScores: t.maxScores,
+    ).map((s) => s.id).toList();
+  }
+
+  /// Inscripción de la ronda → preparación (arma las mesas según el modo).
+  Future<void> buildLeagueTables(Tournament t, Map<int, RoundData> rounds,
+      Map<String, PlayerData> ps, Set<String> entered, List<Claim> claims) async {
+    final n = t.currentRound;
+    final cur = rounds[n];
+    final mode = pairingFrom(cur?.pairing);
+    final prev = rounds.values.where((r) => r.n < n && r.confirmed).toList()
+      ..sort((a, b) => a.n.compareTo(b.n));
+    final participants = entered
+        .where((p) => ps.containsKey(p) && !(ps[p]!.dropped))
+        .toList();
+    final r = buildLeagueRound(
+      n: n,
+      participants: participants,
+      mode: mode,
+      order: _leagueOrder(t, rounds, ps, claims),
+      prevRounds: prev,
+      players: ps,
+      pts: t.pts,
+    );
+    await roundDoc(t.code, n).update({
+      'tables': r.tables.map((x) => x.toMap()).toList(),
+      'byes': r.byes,
+      'repeats': r.repeats,
+      'seatOf': seatOfTables(r.tables),
+    });
+    if (t.status == 'registration') {
+      await tDoc(t.code).update({'status': 'prep'});
+    }
+  }
+
+  /// Reclamos de logros: todos (organizador o si se comparten) o los míos.
+  Stream<List<Claim>> claims(String code) => _db
+      .collection('tournaments/$code/claims')
+      .snapshots()
+      .map((q) => q.docs.map((d) => Claim.fromMap(d.id, d.data())).toList());
+
+  Stream<List<Claim>> myClaims(String code, String pid) => _db
+      .collection('tournaments/$code/claims')
+      .where('pid', isEqualTo: pid)
+      .snapshots()
+      .map((q) => q.docs.map((d) => Claim.fromMap(d.id, d.data())).toList());
+
+  Future<void> claimAchievement(
+          String code, Achievement a, int round, String pid) =>
+      _db.doc('tournaments/$code/claims/${claimId(a, round, pid)}').set({
+        'round': round,
+        'pid': pid,
+        'ach': a.id,
+        'by': uid,
+        'at': now,
+      });
+
+  Future<void> removeClaim(String code, String id) =>
+      _db.doc('tournaments/$code/claims/$id').delete();
+
+  /// Al empezar una ronda de liga: logros automáticos para todos.
+  Future<void> _grantAutoAchievements(Tournament t, RoundData r) async {
+    if (!t.achievementsOn) return;
+    final autos =
+        t.achievementList.where((a) => a.type == AchType.auto).toList();
+    if (autos.isEmpty) return;
+    final b = _db.batch();
+    for (final pid in r.seated) {
+      for (final a in autos) {
+        b.set(_db.doc('tournaments/${t.code}/claims/${claimId(a, r.n, pid)}'), {
+          'round': r.n,
+          'pid': pid,
+          'ach': a.id,
+          'by': uid,
+          'at': now,
+          'auto': true,
+        });
+      }
+    }
+    await b.commit();
+  }
+
+  Future<void> _storeLeagueRound(
+      Tournament t, RoundData r, List<Claim> claims) {
+    final d = storedRoundData(r, t.pts,
+        t.achievementsOn ? t.achievements : const {}, claims, t.tiebreakers);
+    return roundDoc(t.code, r.n).update({'scores': d.scores, 'achTb': d.achTb});
+  }
+
+  /// Recalcula los puntajes guardados de todas las rondas confirmadas (tras
+  /// cambiar puntos, logros o desempates de la liga).
+  Future<void> recomputeLeagueScores(
+      Tournament t, Map<int, RoundData> rounds, List<Claim> claims) async {
+    for (final r in rounds.values.where((r) => r.confirmed)) {
+      await _storeLeagueRound(t, r, claims);
+    }
+  }
+
+  Future<void> finishLeague(Tournament t) => tDoc(t.code).update(
+      {'status': 'finished', 'timerEnds': null, 'timerPaused': null});
+
+  // ---------- catálogo de logros (mantenedor) ----------
+  CollectionReference<Map<String, dynamic>> get achCatalog =>
+      _db.collection('rosters/$ownerId/achievements');
+
+  Stream<List<Achievement>> achievementCatalog() => achCatalog.snapshots().map(
+      (q) => q.docs.map((d) => Achievement.fromMap(d.id, d.data())).toList()
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase())));
+
+  Future<void> saveAchievement(Achievement a) =>
+      achCatalog.doc(a.id).set({...a.toMap(), 'updatedAt': now});
+
+  Future<void> deleteAchievement(String id) => achCatalog.doc(id).delete();
+
+  Future<void> importAchievements(List<Achievement> list) async {
+    final b = _db.batch();
+    for (final a in list) {
+      b.set(achCatalog.doc(a.id), {...a.toMap(), 'updatedAt': now});
+    }
+    await b.commit();
+  }
+
   // ---------- mantenedor de jugadores ----------
   Stream<List<RosterPerson>> rosterPeople() => people.snapshots().map((q) =>
       q.docs.map((d) => RosterPerson.fromMap(d.id, d.data())).toList()
@@ -596,7 +965,7 @@ class Repo {
   /// Agrega un jugador al torneo desde el organizador:
   ///  * con [rosterId]: alguien que ya está en el mantenedor (se reutiliza)
   ///  * sin [rosterId]: jugador nuevo; se crea su ficha manual.
-  Future<void> addPlayerFromRoster(Tournament t, String nick,
+  Future<String> addPlayerFromRoster(Tournament t, String nick,
       {String? rosterId, DeckInfo deck = const DeckInfo()}) async {
     String? rid = rosterId;
     final ts = now;
@@ -634,6 +1003,7 @@ class Repo {
         }, SetOptions(merge: true));
       } catch (_) {}
     }
+    return ref.id;
   }
 
   final _synced = <String>{};
@@ -727,7 +1097,7 @@ class Repo {
   /// Inscribe al usuario actual (jugador u organizador). Devuelve null si
   /// todo bien, o un mensaje para mostrar.
   Future<String?> join(String code, String nick,
-      {DeckInfo deck = const DeckInfo()}) async {
+      {DeckInfo deck = const DeckInfo(), int? round}) async {
     final google = FirebaseAuth.instance.currentUser?.providerData
             .any((p) => p.providerId == 'google.com') ??
         false;
@@ -737,6 +1107,29 @@ class Repo {
     await _remember('joined', code, t.name);
     final pRef = _db.doc('tournaments/$code/players/$uid');
     final p = await pRef.get();
+    if (t.isLeague) {
+      if (p.exists) {
+        await pRef.update({'nick': nick, 'dropped': false, 'google': google});
+      } else {
+        await pRef.set({
+          'nick': nick,
+          'uid': uid,
+          'dropped': false,
+          'joinedAt': now,
+          'google': google,
+        });
+      }
+      if (!deck.isEmpty) await saveDeck(code, uid, deck);
+      final open = t.status == 'registration' || t.status == 'prep';
+      if (round != null && round != t.currentRound) {
+        return 'Esa clave es de la ronda $round, que ya no está abierta. Quedaste inscrito en la liga.';
+      }
+      if (!open) {
+        return 'Inscrito en la liga. Podrás entrar a la próxima ronda con su clave.';
+      }
+      await addEntry(code, t.currentRound, uid);
+      return null;
+    }
     if (p.exists) {
       await pRef.update({'nick': nick, 'dropped': false, 'google': google});
       if (!deck.isEmpty) await saveDeck(code, uid, deck);

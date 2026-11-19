@@ -15,6 +15,14 @@ service cloud.firestore {
       return t.get(field, 'never') == 'always'
         || (t.get(field, 'never') == 'end' && t.status == 'finished');
     }
+    // Reclamo de logro válido según su tipo (ver claimId en lib/logic/league.dart).
+    function claimKeyOk(code, key, d) {
+      let a = tourn(code).achievements[d.ach];
+      let base = 'r' + string(d.round) + '-' + d.ach;
+      return (a.type == 'player' && key == base + '-' + d.pid)
+        || (a.type == 'round' && key == base)
+        || (a.type == 'unlimited' && key.matches(base + '-' + d.pid + '-[a-z0-9]+'));
+    }
     function seatOf(code, round) {
       return get(/databases/$(database)/documents/tournaments/$(code)/rounds/$('r' + string(round))).data.seatOf;
     }
@@ -31,11 +39,23 @@ service cloud.firestore {
       match /people/{id} {
         allow read, write: if signedIn() && request.auth.uid == owner;
       }
+      match /achievements/{id} {
+        allow read, write: if signedIn() && request.auth.uid == owner;
+      }
     }
     // Cada persona puede leer las fichas vinculadas a su cuenta en cualquier
     // mantenedor (para su historial de torneos).
     match /{path=**}/people/{id} {
       allow read: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // Claves de ronda de liga → torneo y número de ronda.
+    match /roundKeys/{key} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn() && key.matches('^[A-Z0-9]{6}$')
+        && tourn(request.resource.data.code).organizerId == request.auth.uid;
+      allow delete: if signedIn() && tourn(resource.data.code).organizerId == request.auth.uid;
     }
 
     match /tournaments/{code} {
@@ -88,6 +108,41 @@ service cloud.firestore {
           && request.resource.data.round == tourn(code).currentRound
           && key == 'r' + string(request.resource.data.round) + '-t' + string(request.resource.data.table)
           && seatOf(code, request.resource.data.round)[request.auth.uid] == request.resource.data.table);
+      }
+
+      // Liga: inscripción a cada ronda (id r{n}-{pid}).
+      match /entries/{key} {
+        allow read: if signedIn();
+        allow create: if isOrg(code) || (signedIn()
+          && request.resource.data.pid == request.auth.uid
+          && key == 'r' + string(request.resource.data.round) + '-' + request.auth.uid
+          && request.resource.data.round == tourn(code).currentRound
+          && tourn(code).status in ['registration', 'prep']);
+        allow update: if isOrg(code);
+        allow delete: if isOrg(code) || (signedIn()
+          && resource.data.pid == request.auth.uid
+          && tourn(code).status in ['registration', 'prep']);
+      }
+
+      // Liga: logros obtenidos. El jugador reclama los suyos durante la ronda,
+      // según las reglas de cada tipo; el organizador puede modificar todo.
+      match /claims/{key} {
+        allow read: if isOrg(code)
+          || (signedIn() && shared(code, 'shareAchievements'))
+          || (signedIn() && resource.data.pid == request.auth.uid);
+        allow create: if isOrg(code) || (signedIn()
+          && request.resource.data.pid == request.auth.uid
+          && request.resource.data.round == tourn(code).currentRound
+          && tourn(code).status == 'round'
+          && tourn(code).achievementsOn == true
+          && tourn(code).achievements[request.resource.data.ach].type != 'auto'
+          && request.auth.uid in seatOf(code, request.resource.data.round)
+          && claimKeyOk(code, key, request.resource.data));
+        allow update: if isOrg(code);
+        allow delete: if isOrg(code) || (signedIn()
+          && resource.data.pid == request.auth.uid
+          && resource.data.round == tourn(code).currentRound
+          && tourn(code).status == 'round');
       }
 
       // Votos especiales: id r{n}-{uid}. Cada jugador vota solo por sí mismo,

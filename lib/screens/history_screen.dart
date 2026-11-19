@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../data/repo.dart';
+import '../logic/league.dart';
 import '../logic/swiss.dart';
 import '../ui/theme.dart';
 import '../widgets/common.dart';
@@ -96,6 +97,27 @@ class _HistoryTileState extends State<_HistoryTile> {
         (ps.containsKey(uid)
             ? uid
             : ps.values.where((p) => p.uid == uid).map((p) => p.id).firstOrNullX);
+    if (t.isLeague) {
+      // Liga: posición según su standing (puntajes guardados por ronda).
+      final ls = computeLeagueStandings(
+        rounds: rs,
+        players: ps,
+        pts: t.pts,
+        claims: null,
+        tiebreakers: t.tiebreakers,
+        maxScores: t.maxScores,
+      );
+      final m = ls.where((s) => s.id == myId);
+      final played = ls.where((s) => s.roundsPlayed > 0).length;
+      if (m.isEmpty) return _Summary(t, null, played);
+      final x = m.first;
+      return _Summary(
+          t,
+          Standing(x.id)
+            ..rank = x.rank
+            ..pts = x.total,
+          played);
+    }
     final mine = st.where((s) => s.id == myId);
     return _Summary(t, mine.isEmpty ? null : mine.first, ps.length);
   }
@@ -118,8 +140,11 @@ class _HistoryTileState extends State<_HistoryTile> {
           sub = '';
         } else {
           final status = switch (s.t.status) {
-            'registration' => 'Inscripción',
-            'prep' || 'round' => 'En curso · ronda ${s.t.currentRound}',
+            'registration' => s.t.isLeague
+                ? 'Liga · inscripción ronda ${s.t.currentRound}'
+                : 'Inscripción',
+            'between' => 'Liga · ${s.t.currentRound} ronda(s)',
+            'prep' || 'round' => '${s.t.isLeague ? 'Liga · ' : ''}En curso · ronda ${s.t.currentRound}',
             _ => 'Finalizado',
           };
           final role = s.t.organizerId == uid ? 'Organizador · ' : '';

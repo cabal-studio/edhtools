@@ -127,13 +127,29 @@ class RoundData {
 
   /// Preguntas de votación especial activas en esta ronda.
   final List<String> voteQuestions;
+
+  // Solo liga: clave de la ronda, modo de mesas y fecha (epoch ms).
+  final String? key;
+  final String? pairing;
+  final int? date;
+
+  /// Liga: puntaje de cada jugador en la ronda (con logros) y veces que obtuvo
+  /// cada logro usado como desempate. Los guarda el organizador al enviar los
+  /// puntos, para que el standing sea correcto aunque los logros sean privados.
+  final Map<String, num>? scores;
+  final Map<String, Map<String, int>>? achTb;
   RoundData(
       {required this.n,
       required this.tables,
       this.byes = const [],
       this.confirmed = false,
       this.repeats = 0,
-      this.voteQuestions = const []});
+      this.voteQuestions = const [],
+      this.key,
+      this.pairing,
+      this.date,
+      this.scores,
+      this.achTb});
 
   factory RoundData.fromMap(Map<String, dynamic> m) => RoundData(
         n: asInt(m['n']),
@@ -144,6 +160,25 @@ class RoundData {
         confirmed: m['confirmed'] == true,
         repeats: asInt(m['repeats']),
         voteQuestions: List<String>.from(m['voteQuestions'] ?? const []),
+        key: m['key'] as String?,
+        pairing: m['pairing'] as String?,
+        date: m['date'] is num ? asInt(m['date']) : null,
+        scores: m['scores'] is Map
+            ? {
+                for (final e in Map<String, dynamic>.from(m['scores']).entries)
+                  e.key: asNum(e.value)
+              }
+            : null,
+        achTb: m['achTb'] is Map
+            ? {
+                for (final e in Map<String, dynamic>.from(m['achTb']).entries)
+                  e.key: {
+                    for (final x
+                        in Map<String, dynamic>.from(e.value as Map).entries)
+                      x.key: asInt(x.value)
+                  }
+              }
+            : null,
       );
 
   /// `seatOf` permite a las reglas de Firestore validar que quien reporta
@@ -157,6 +192,9 @@ class RoundData {
         'voteQuestions': voteQuestions,
         'seatOf': seatOfTables(tables),
         'createdAt': DateTime.now().millisecondsSinceEpoch,
+        if (key != null) 'key': key,
+        if (pairing != null) 'pairing': pairing,
+        if (date != null) 'date': date,
       };
 
   RoundData copyWith({
@@ -173,6 +211,11 @@ class RoundData {
         confirmed: confirmed ?? this.confirmed,
         repeats: repeats ?? this.repeats,
         voteQuestions: voteQuestions ?? this.voteQuestions,
+        key: key,
+        pairing: pairing,
+        date: date,
+        scores: scores,
+        achTb: achTb,
       );
 
   RoundData withConfirmed(bool c) => copyWith(confirmed: c);

@@ -24,12 +24,21 @@ class _PlayScreenState extends State<PlayScreen> {
   Tournament? _peeked;
   String _peekedCode = '';
 
+  /// Si la clave es de una ronda de liga, su número.
+  int? _peekRound;
+
   Future<void> _peek(String code) async {
     if (code.length != 6 || code == _peekedCode) return;
     _peekedCode = code;
     try {
-      final t = await Repo.i.peek(code);
-      if (mounted && _peekedCode == code) setState(() => _peeked = t);
+      final k = await Repo.i.resolveKey(code);
+      final t = k == null ? null : await Repo.i.peek(k.code);
+      if (mounted && _peekedCode == code) {
+        setState(() {
+          _peeked = t;
+          _peekRound = k?.round;
+        });
+      }
     } catch (_) {}
   }
 
@@ -44,8 +53,16 @@ class _PlayScreenState extends State<PlayScreen> {
       toast(context, 'Ingresa tu nombre');
       return;
     }
-    final t = _peeked;
-    if (join && t != null && t.code == code) {
+    // Resolver la clave (torneo, liga o ronda de liga).
+    await _peek(code);
+    final t = _peekedCode == code ? _peeked : null;
+    if (t == null) {
+      if (mounted) toast(context, 'No existe un torneo con esa clave');
+      return;
+    }
+    final target = t.code;
+    final round = _peekRound;
+    if (join) {
       final e = DeckFields.validate(t, _cmd.text, _url.text);
       if (e != null) {
         toast(context, e);
@@ -55,10 +72,11 @@ class _PlayScreenState extends State<PlayScreen> {
     setState(() => _busy = true);
     await guard(context, () async {
       final msg = join
-          ? await Repo.i.join(code, nick,
+          ? await Repo.i.join(target, nick,
+              round: round,
               deck: DeckInfo(
                   commander: _cmd.text.trim(), listUrl: _url.text.trim()))
-          : await Repo.i.watch(code);
+          : await Repo.i.watch(target);
       if (!mounted) return;
       if (msg != null) toast(context, msg);
       if (msg == 'No existe un torneo con esa clave') return;
@@ -66,7 +84,7 @@ class _PlayScreenState extends State<PlayScreen> {
           context,
           MaterialPageRoute(
               builder: (_) =>
-                  TournamentScreen(code: code, startOnMyTable: join)));
+                  TournamentScreen(code: target, startOnMyTable: join)));
     });
     if (mounted) setState(() => _busy = false);
   }
@@ -119,10 +137,11 @@ class _PlayScreenState extends State<PlayScreen> {
                           _peek(v.trim().toUpperCase());
                         },
                       ),
-                      if (_peeked != null && _peeked!.code == _code.text.trim().toUpperCase())
+                      if (_peeked != null && _peekedCode == _code.text.trim().toUpperCase())
                         Padding(
                           padding: const EdgeInsets.only(top: 4),
-                          child: Text('Torneo: ${_peeked!.name}',
+                          child: Text(
+                              '${_peeked!.isLeague ? 'Liga' : 'Torneo'}: ${_peeked!.name}${_peekRound != null ? ' · ronda $_peekRound' : ''}',
                               textAlign: TextAlign.center,
                               style: const TextStyle(color: kOk)),
                         ),
@@ -134,7 +153,7 @@ class _PlayScreenState extends State<PlayScreen> {
                             labelText: 'Tu nombre / nick', counterText: ''),
                         onSubmitted: (_) => _go(join: true),
                       ),
-                      if (_peeked != null && _peeked!.code == _code.text.trim().toUpperCase())
+                      if (_peeked != null && _peekedCode == _code.text.trim().toUpperCase())
                         DeckFields(t: _peeked!, commander: _cmd, listUrl: _url),
                       const SizedBox(height: 14),
                       Row(children: [

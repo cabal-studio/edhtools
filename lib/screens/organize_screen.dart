@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../data/repo.dart';
+import '../logic/league.dart';
 import '../logic/swiss.dart';
+import '../widgets/league_widgets.dart';
+import 'achievements_screen.dart';
 import '../ui/theme.dart';
 import 'roster_screen.dart';
 import 'tournament_screen.dart';
@@ -30,12 +33,46 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
   ShareMode _shareVotes = ShareMode.never;
   bool _busy = false;
 
+  // Liga
+  bool _league = false;
+  bool _achOn = false;
+  List<Achievement> _achs = [];
+  List<String> _tbs = List.of(kDefaultTiebreakers);
+  final _max = TextEditingController(text: '0');
+  ShareMode _shareAch = ShareMode.end;
+
   num _n(TextEditingController c, num d) => num.tryParse(c.text.trim()) ?? d;
 
   Future<void> _create() async {
     setState(() => _busy = true);
     await guard(context, () async {
-      final code = await Repo.i.createTournament(
+      final pts = Points(
+        win: _n(_win, 5),
+        draw: _n(_draw, 1),
+        loss: _n(_loss, 0),
+        p2: _n(_p2, 0),
+        p3: _n(_p3, 0),
+        bye: _n(_bye, 5),
+      );
+      final name = _name.text.trim();
+      final code = _league
+          ? await Repo.i.createLeague(
+              name: name.isEmpty ? 'Liga Commander' : name,
+              roundMinutes: _n(_min, 75).clamp(1, 240).toInt(),
+              pts: pts,
+              commanderField: _cmd,
+              deckListField: _list,
+              shareDecks: _shareDecks,
+              shareVotes: _shareVotes,
+              achievementsOn: _achOn && _achs.isNotEmpty,
+              achievements: _achOn ? _achs : const [],
+              tiebreakers: _achOn
+                  ? _tbs
+                  : _tbs.where((k) => !k.startsWith('ach:')).toList(),
+              maxScores: _n(_max, 0).toInt().abs(),
+              shareAchievements: _shareAch,
+            )
+          : await Repo.i.createTournament(
         name: _name.text.trim().isEmpty ? 'Torneo Commander' : _name.text.trim(),
         rounds: _n(_rounds, 4).clamp(1, 15).toInt(),
         roundMinutes: _n(_min, 75).clamp(1, 240).toInt(),
@@ -55,6 +92,7 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
       if (!mounted) return;
       Navigator.push(context,
           MaterialPageRoute(builder: (_) => TournamentScreen(code: code)));
+      return;
     });
     if (mounted) setState(() => _busy = false);
   }
@@ -95,6 +133,13 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
             ),
           ]),
           const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const AchievementsScreen())),
+            icon: const Icon(Icons.military_tech),
+            label: const Text('Logros (para ligas)'),
+          ),
+          const SizedBox(height: 8),
           StreamBuilder<Map<String, dynamic>>(
             stream: Repo.i.me(),
             builder: (context, snap) {
@@ -109,11 +154,34 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Text('Nuevo torneo',
-                      style: TextStyle(
+                  Text(_league ? 'Nueva liga' : 'Nuevo torneo',
+                      style: const TextStyle(
                           fontSize: 17,
                           fontWeight: FontWeight.w700,
                           color: kGoldLight)),
+                  const SizedBox(height: 12),
+                  SegmentedButton<bool>(
+                    showSelectedIcon: false,
+                    segments: const [
+                      ButtonSegment(
+                          value: false,
+                          icon: Icon(Icons.emoji_events_outlined),
+                          label: Text('Torneo suizo')),
+                      ButtonSegment(
+                          value: true,
+                          icon: Icon(Icons.calendar_month),
+                          label: Text('Liga')),
+                    ],
+                    selected: {_league},
+                    onSelectionChanged: (v) => setState(() => _league = v.first),
+                  ),
+                  if (_league)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 6),
+                      child: Text(
+                          'Cada ronda se juega cuando quieras (otro día), con su propia clave y los jugadores que se inscriban.',
+                          style: TextStyle(color: kMuted, fontSize: 12.5)),
+                    ),
                   const SizedBox(height: 12),
                   TextField(
                       controller: _name,
@@ -121,10 +189,24 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
                           labelText: 'Nombre', hintText: 'Commander Night #12')),
                   const SizedBox(height: 10),
                   Row(children: [
-                    Expanded(child: _numField('Rondas suizas', _rounds)),
-                    const SizedBox(width: 10),
+                    if (!_league) ...[
+                      Expanded(child: _numField('Rondas suizas', _rounds)),
+                      const SizedBox(width: 10),
+                    ],
                     Expanded(child: _numField('Minutos por ronda', _min)),
+                    if (_league) ...[
+                      const SizedBox(width: 10),
+                      Expanded(
+                          child: _numField('Puntajes máximos (0 = todos)', _max)),
+                    ],
                   ]),
+                  if (_league)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4),
+                      child: Text(
+                          'Puntajes máximos: si eliges 3, el standing suma solo los 3 mejores puntajes de ronda de cada jugador.',
+                          style: TextStyle(color: kMuted, fontSize: 12)),
+                    ),
                   const SizedBox(height: 16),
                   const Text('PUNTOS POR MESA',
                       style: TextStyle(color: kGold, fontSize: 12)),
@@ -151,6 +233,39 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
                     style: TextStyle(color: kMuted, fontSize: 12.5),
                   ),
                   const SizedBox(height: 16),
+                  if (_league) ...[
+                    const Text('LOGROS Y DESEMPATES',
+                        style: TextStyle(color: kGold, fontSize: 12)),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Usar logros'),
+                      value: _achOn,
+                      onChanged: (v) => setState(() => _achOn = v),
+                    ),
+                    if (_achOn) ...[
+                      AchievementSelector(
+                          selected: _achs,
+                          onChanged: (v) => setState(() {
+                                _achs = v;
+                                final ids = v.map((a) => a.id).toSet();
+                                _tbs = _tbs
+                                    .where((k) =>
+                                        !k.startsWith('ach:') ||
+                                        ids.contains(k.substring(4)))
+                                    .toList();
+                              })),
+                      ShareModePicker(
+                          label: 'Quién ve el detalle de logros',
+                          value: _shareAch,
+                          onChanged: (v) => setState(() => _shareAch = v)),
+                    ],
+                    TiebreakEditor(
+                        value: _tbs,
+                        achievements:
+                            _achOn ? {for (final a in _achs) a.id: a} : const {},
+                        onChanged: (v) => setState(() => _tbs = v)),
+                    const SizedBox(height: 16),
+                  ],
                   const Text('INSCRIPCIÓN Y PRIVACIDAD',
                       style: TextStyle(color: kGold, fontSize: 12)),
                   FieldModePicker(
@@ -176,7 +291,9 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
                         padding: const EdgeInsets.all(16)),
                     child: Text(_busy
                         ? 'Creando…'
-                        : 'Crear torneo y obtener clave'),
+                        : _league
+                            ? 'Crear liga y obtener clave'
+                            : 'Crear torneo y obtener clave'),
                   ),
                 ],
               ),
