@@ -593,6 +593,9 @@ class _LeagueSettingsFormState extends State<_LeagueSettingsForm> {
   late ShareMode shareAch = widget.t.shareAchievements;
   late bool achOn = widget.t.achievementsOn;
   late List<Achievement> achs = widget.t.achievementList;
+  late AchList? achList = widget.t.achListId == null
+      ? null
+      : AchList(widget.t.achListId!, widget.t.achListName ?? 'Lista');
   late List<String> tbs = List.of(widget.t.tiebreakers);
 
   num _n(String k, num d) => num.tryParse(c[k]!.text.trim()) ?? d;
@@ -644,6 +647,8 @@ class _LeagueSettingsFormState extends State<_LeagueSettingsForm> {
           if (achOn) ...[
             AchievementSelector(
                 owner: t.ownerId,
+                listId: achList?.id,
+                onListChanged: (l) => setState(() => achList = l),
                 selected: achs,
                 onChanged: (v) => setState(() {
                       achs = v;
@@ -691,6 +696,7 @@ class _LeagueSettingsFormState extends State<_LeagueSettingsForm> {
                 shareVotes: shareVotes,
                 achievementsOn: achOn,
                 achievements: achs,
+                achList: achOn ? achList : null,
                 tiebreakers: achOn
                     ? tbs
                     : tbs.where((k) => !k.startsWith('ach:')).toList(),

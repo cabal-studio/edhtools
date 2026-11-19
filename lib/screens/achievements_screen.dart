@@ -9,9 +9,10 @@ import '../logic/league.dart';
 import '../ui/theme.dart';
 import '../widgets/common.dart';
 
-/// Mantenedor de logros para las ligas: manual o carga desde CSV.
+/// Mantenedor de listas de logros: cada lista tiene nombre, estado y sus
+/// logros. Solo las listas activas se ofrecen al crear una liga.
 class AchievementsScreen extends StatefulWidget {
-  /// null = mi catálogo; 'g_{id}' = catálogo de un grupo.
+  /// null = mis listas; 'g_{id}' = listas de un grupo.
   final String? owner;
   final String title;
   const AchievementsScreen({super.key, this.owner, this.title = 'Logros'});
@@ -20,14 +21,146 @@ class AchievementsScreen extends StatefulWidget {
 }
 
 class _AchievementsScreenState extends State<AchievementsScreen> {
-  late final Stream<List<Achievement>> _stream = Repo.i.achievementCatalog(owner: widget.owner);
+  late final Stream<List<AchList>> _stream = Repo.i.achLists(owner: widget.owner);
+
+  @override
+  void initState() {
+    super.initState();
+    Repo.i.migrateLegacyAchievements(owner: widget.owner).catchError((_) {});
+  }
+
+  Future<String?> _name(String title, {String initial = ''}) {
+    final c = TextEditingController(text: initial);
+    return showDialog<String>(
+      context: context,
+      builder: (d) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: c,
+          autofocus: true,
+          maxLength: 40,
+          decoration: const InputDecoration(
+              labelText: 'Nombre de la lista', counterText: ''),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(d), child: const Text('Cancelar')),
+          FilledButton(
+              onPressed: () => Navigator.pop(d, c.text.trim()),
+              child: const Text('Guardar')),
+        ],
+      ),
+    );
+  }
+
+  void _open(AchList l) => Navigator.push(
+      context,
+      MaterialPageRoute(
+          builder: (_) =>
+              AchListScreen(owner: widget.owner, listId: l.id, title: l.name)));
+
+  Future<void> _create() async {
+    final n = await _name('Nueva lista de logros');
+    if (n == null || n.isEmpty || !mounted) return;
+    await guard(context, () async {
+      final id = await Repo.i.createAchList(n, owner: widget.owner);
+      if (mounted) _open(AchList(id, n));
+    });
+  }
+
+  Future<void> _menu(AchList l, String action) async {
+    if (action == 'rename') {
+      final n = await _name('Renombrar lista', initial: l.name);
+      if (n == null || n.isEmpty || !mounted) return;
+      await guard(context,
+          () => Repo.i.updateAchList(l.id, owner: widget.owner, name: n));
+    } else if (action == 'delete') {
+      final ok = await confirmDialog(context,
+          '¿Borrar la lista "${l.name}" y sus ${l.count} logro(s)? Las ligas que ya la usan conservan sus logros.',
+          ok: 'Borrar');
+      if (!ok || !mounted) return;
+      await guard(context, () => Repo.i.deleteAchList(l.id, owner: widget.owner));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.title)),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _create,
+        icon: const Icon(Icons.add),
+        label: const Text('Nueva lista'),
+      ),
+      body: StreamBuilder<List<AchList>>(
+        stream: _stream,
+        builder: (context, snap) {
+          if (snap.hasError) return Center(child: Text('Error: ${snap.error}'));
+          if (!snap.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final lists = snap.data!;
+          return ListView(padding: const EdgeInsets.fromLTRB(16, 16, 16, 90), children: [
+            const Text(
+                'Agrupa tus logros en listas. Al crear una liga eliges una lista activa; desactiva las que no quieras ofrecer.',
+                style: TextStyle(color: kMuted, fontSize: 12.5)),
+            const SizedBox(height: 10),
+            if (lists.isEmpty) const EmptyCard('Aún no tienes listas de logros.'),
+            for (final l in lists)
+              Card(
+                child: ListTile(
+                  leading: Icon(Icons.military_tech,
+                      color: l.active ? kGold : kMuted),
+                  title: Text(l.name),
+                  subtitle: Text(
+                      '${l.count} logro(s) · ${l.active ? 'Activa' : 'Inactiva'}'),
+                  onTap: () => _open(l),
+                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Switch(
+                      value: l.active,
+                      onChanged: (v) => guard(
+                          context,
+                          () => Repo.i.updateAchList(l.id,
+                              owner: widget.owner, active: v)),
+                    ),
+                    PopupMenuButton<String>(
+                      onSelected: (a) => _menu(l, a),
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(value: 'rename', child: Text('Renombrar')),
+                        PopupMenuItem(value: 'delete', child: Text('Borrar')),
+                      ],
+                    ),
+                  ]),
+                ),
+              ),
+          ]);
+        },
+      ),
+    );
+  }
+}
+
+/// Logros de una lista: manual o carga desde CSV.
+class AchListScreen extends StatefulWidget {
+  final String? owner;
+  final String listId;
+  final String title;
+  const AchListScreen(
+      {super.key, this.owner, required this.listId, required this.title});
+  @override
+  State<AchListScreen> createState() => _AchListScreenState();
+}
+
+class _AchListScreenState extends State<AchListScreen> {
+  late final Stream<List<Achievement>> _stream =
+      Repo.i.achievementCatalog(widget.listId, owner: widget.owner);
   List<Achievement> _current = const [];
 
   Future<void> _edit([Achievement? a]) async {
     final res = await editAchievementDialog(context, a,
         taken: _current.map((x) => x.id).toSet());
     if (res == null || !mounted) return;
-    await guard(context, () => Repo.i.saveAchievement(res, owner: widget.owner));
+    await guard(context, () => Repo.i.saveAchievement(widget.listId, res, owner: widget.owner));
   }
 
   Future<void> _importCsv() async {
@@ -48,7 +181,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
       ok: 'Importar',
     );
     if (!ok || !mounted) return;
-    await guard(context, () => Repo.i.importAchievements(r.items, owner: widget.owner));
+    await guard(context, () => Repo.i.importAchievements(widget.listId, r.items, owner: widget.owner));
     if (mounted) toast(context, '${r.items.length} logro(s) importados');
   }
 
@@ -86,7 +219,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
           _current = snap.data!;
           return ListView(padding: const EdgeInsets.fromLTRB(16, 16, 16, 90), children: [
             const Text(
-                'Logros disponibles para tus ligas. Al crear o configurar una liga eliges cuáles usar.',
+                'Logros de esta lista. Al crear una liga eliges la lista y puedes desmarcar logros.',
                 style: TextStyle(color: kMuted, fontSize: 12.5)),
             const SizedBox(height: 10),
             OutlinedButton.icon(
@@ -95,7 +228,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
               label: const Text('Importar desde CSV'),
             ),
             const SizedBox(height: 8),
-            if (_current.isEmpty) const EmptyCard('Aún no tienes logros.'),
+            if (_current.isEmpty) const EmptyCard('Esta lista aún no tiene logros.'),
             for (final a in _current)
               Card(
                 child: ListTile(
@@ -111,11 +244,11 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                     icon: const Icon(Icons.delete_outline),
                     onPressed: () async {
                       if (await confirmDialog(context,
-                              '¿Borrar "${a.name}" del catálogo? Las ligas que ya lo usan lo conservan.',
+                              '¿Borrar "${a.name}" de la lista? Las ligas que ya lo usan lo conservan.',
                               ok: 'Borrar') &&
                           context.mounted) {
                         await guard(
-                            context, () => Repo.i.deleteAchievement(a.id, owner: widget.owner));
+                            context, () => Repo.i.deleteAchievement(widget.listId, a.id, owner: widget.owner));
                       }
                     },
                   ),

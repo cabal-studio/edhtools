@@ -85,64 +85,128 @@ class TiebreakEditor extends StatelessWidget {
   }
 }
 
-/// Elige qué logros del catálogo usa la liga.
+/// Elige la lista de logros (solo activas) y, dentro de ella, qué logros
+/// usa la liga. Al cambiar de lista se marcan todos sus logros.
 class AchievementSelector extends StatefulWidget {
   final List<Achievement> selected;
   final ValueChanged<List<Achievement>> onChanged;
+  final String? listId;
+  final ValueChanged<AchList> onListChanged;
   final String? owner;
   const AchievementSelector(
-      {super.key, required this.selected, required this.onChanged, this.owner});
+      {super.key,
+      required this.selected,
+      required this.onChanged,
+      required this.listId,
+      required this.onListChanged,
+      this.owner});
   @override
   State<AchievementSelector> createState() => _AchievementSelectorState();
 }
 
 class _AchievementSelectorState extends State<AchievementSelector> {
-  late final Stream<List<Achievement>> _stream =
-      Repo.i.achievementCatalog(owner: widget.owner);
+  late final Stream<List<AchList>> _lists = Repo.i.achLists(owner: widget.owner);
+  Stream<List<Achievement>>? _catalog;
+  String? _catalogFor;
+
+  Stream<List<Achievement>> _catalogStream(String id) {
+    if (_catalogFor != id || _catalog == null) {
+      _catalogFor = id;
+      _catalog = Repo.i.achievementCatalog(id, owner: widget.owner);
+    }
+    return _catalog!;
+  }
+
+  Future<void> _pick(AchList l) async {
+    widget.onListChanged(l);
+    final all = await Repo.i.achievementsOnce(l.id, owner: widget.owner);
+    widget.onChanged(all);
+  }
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<List<Achievement>>(
-      stream: _stream,
+    return StreamBuilder<List<AchList>>(
+      stream: _lists,
       builder: (context, snap) {
-        final catalog = snap.data ?? const <Achievement>[];
-        final selIds = widget.selected.map((a) => a.id).toSet();
-        // Logros de la liga que ya no están en el catálogo se conservan.
-        final extra = widget.selected.where((a) => !catalog.any((c) => c.id == a.id));
-        final all = [...catalog, ...extra];
+        final lists = snap.data ?? const <AchList>[];
+        final options = [
+          for (final l in lists)
+            if (l.active || l.id == widget.listId) l,
+        ];
+        final current = widget.listId;
+        final valid = options.any((l) => l.id == current);
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Text('Logros de la liga (${widget.selected.length})',
-              style: const TextStyle(color: kMuted, fontSize: 12.5)),
-          const SizedBox(height: 4),
-          if (all.isEmpty)
+          if (!snap.hasData)
+            const LinearProgressIndicator()
+          else if (options.isEmpty)
             const Text(
-                'Tu catálogo de logros está vacío. Créalos en Organizar → Logros.',
-                style: TextStyle(color: kBad, fontSize: 12.5)),
-          Wrap(spacing: 6, runSpacing: 6, children: [
-            for (final a in all)
-              FilterChip(
-                label: Text('${a.name} (${a.points > 0 ? '+' : ''}${a.points})'),
-                tooltip: '${kAchTypeLabels[a.type]} · ${a.description}',
-                selected: selIds.contains(a.id),
-                onSelected: (v) {
-                  final next = v
-                      ? [...widget.selected, catalog.firstWhere((c) => c.id == a.id, orElse: () => a)]
-                      : widget.selected.where((x) => x.id != a.id).toList();
-                  widget.onChanged(next);
-                },
-              ),
-          ]),
-          if (catalog.isNotEmpty)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                onPressed: () => widget.onChanged(catalog),
-                child: const Text('Seleccionar todos'),
-              ),
+                'No tienes listas de logros activas. Créalas en Organizar → Logros.',
+                style: TextStyle(color: kBad, fontSize: 12.5))
+          else
+            DropdownButtonFormField<String>(
+              key: ValueKey('achlist-${valid ? current : ''}'),
+              initialValue: valid ? current : null,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Lista de logros'),
+              items: [
+                for (final l in options)
+                  DropdownMenuItem(
+                    value: l.id,
+                    child: Text(
+                        '${l.name} (${l.count})${l.active ? '' : ' · inactiva'}',
+                        overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              onChanged: (id) {
+                if (id == null || id == current) return;
+                _pick(options.firstWhere((l) => l.id == id));
+              },
             ),
+          const SizedBox(height: 8),
+          if (current != null && valid)
+            StreamBuilder<List<Achievement>>(
+              stream: _catalogStream(current),
+              builder: (context, cs) => _chips(cs.data ?? const []),
+            )
+          else if (widget.selected.isNotEmpty)
+            _chips(const []),
         ]);
       },
     );
+  }
+
+  Widget _chips(List<Achievement> catalog) {
+    final selIds = widget.selected.map((a) => a.id).toSet();
+    // Logros de la liga que ya no están en la lista se conservan.
+    final extra = widget.selected.where((a) => !catalog.any((c) => c.id == a.id));
+    final all = [...catalog, ...extra];
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Text('Logros de la liga (${widget.selected.length})',
+          style: const TextStyle(color: kMuted, fontSize: 12.5)),
+      const SizedBox(height: 4),
+      Wrap(spacing: 6, runSpacing: 6, children: [
+        for (final a in all)
+          FilterChip(
+            label: Text('${a.name} (${a.points > 0 ? '+' : ''}${a.points})'),
+            tooltip: '${kAchTypeLabels[a.type]} · ${a.description}',
+            selected: selIds.contains(a.id),
+            onSelected: (v) {
+              final next = v
+                  ? [...widget.selected, catalog.firstWhere((c) => c.id == a.id, orElse: () => a)]
+                  : widget.selected.where((x) => x.id != a.id).toList();
+              widget.onChanged(next);
+            },
+          ),
+      ]),
+      if (catalog.isNotEmpty)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            onPressed: () => widget.onChanged(catalog),
+            child: const Text('Seleccionar todos'),
+          ),
+        ),
+    ]);
   }
 }
 

@@ -41,6 +41,7 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
   bool _league = false;
   bool _achOn = false;
   List<Achievement> _achs = [];
+  AchList? _achList;
   List<String> _tbs = List.of(kDefaultTiebreakers);
   final _max = TextEditingController(text: '0');
   ShareMode _shareAch = ShareMode.end;
@@ -73,6 +74,7 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
               shareVotes: _shareVotes,
               achievementsOn: _achOn && _achs.isNotEmpty,
               achievements: _achOn ? _achs : const [],
+              achList: _achOn ? _achList : null,
               tiebreakers: _achOn
                   ? _tbs
                   : _tbs.where((k) => !k.startsWith('ach:')).toList(),
@@ -318,6 +320,8 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
                     if (_achOn) ...[
                       AchievementSelector(
                         owner: widget.group?.owner,
+                          listId: _achList?.id,
+                          onListChanged: (l) => setState(() => _achList = l),
                           selected: _achs,
                           onChanged: (v) => setState(() {
                                 _achs = v;

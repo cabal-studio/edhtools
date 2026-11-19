@@ -72,6 +72,13 @@ service cloud.firestore {
       match /achievements/{id} {
         allow read, write: if canRoster(owner);
       }
+      // Listas de logros y sus logros.
+      match /achLists/{lid} {
+        allow read, write: if canRoster(owner);
+        match /achievements/{id} {
+          allow read, write: if canRoster(owner);
+        }
+      }
     }
     // Cada persona puede leer las fichas vinculadas a su cuenta en cualquier
     // mantenedor (para su historial de torneos).

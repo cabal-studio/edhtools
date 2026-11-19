@@ -115,7 +115,13 @@ class Tournament {
         createdAt = asInt(m['createdAt']),
         date = m['date'] is num ? asInt(m['date']) : null,
         groupId = m['groupId'] as String?,
+        achListId = m['achListId'] as String?,
+        achListName = m['achListName'] as String?,
         groupName = m['groupName'] as String?;
+
+  /// Lista de logros de la que salen los logros de la liga.
+  final String? achListId;
+  final String? achListName;
 
   /// Grupo de organizadores con el que se creó (null = individual).
   final String? groupId;
@@ -216,6 +222,20 @@ class RosterPerson {
 
   /// Torneos distintos (un torneo puede aparecer dos veces tras una fusión).
   int get tournamentCount => tournaments.map((t) => t.code).toSet().length;
+}
+
+/// Lista de logros del mantenedor. Solo las activas se ofrecen al crear
+/// una liga.
+class AchList {
+  final String id;
+  final String name;
+  final bool active;
+  final int count;
+  const AchList(this.id, this.name, {this.active = true, this.count = 0});
+  AchList.fromMap(this.id, Map<String, dynamic> m)
+      : name = (m['name'] as String?) ?? 'Lista',
+        active = m['active'] != false,
+        count = asInt(m['count']);
 }
 
 /// Grupo de organizadores: tiene mantenedores propios (rosters/g_{id}) e
@@ -766,6 +786,7 @@ class Repo {
     required ShareMode shareAchievements,
     int? date,
     Group? group,
+    AchList? achList,
   }) =>
       createTournament(
         date: date,
@@ -781,6 +802,8 @@ class Repo {
         extra: {
           'type': 'league',
           'status': 'between',
+          'achListId': achList?.id,
+          'achListName': achList?.name,
           ..._leagueFields(achievementsOn, achievements, tiebreakers,
               maxScores, shareAchievements),
         },
@@ -810,8 +833,11 @@ class Repo {
     required List<String> tiebreakers,
     required int maxScores,
     required ShareMode shareAchievements,
+    AchList? achList,
   }) =>
       tDoc(t.code).update({
+        if (achList != null) 'achListId': achList.id,
+        if (achList != null) 'achListName': achList.name,
         'roundMinutes': minutes,
         'pts': pts.toMap(),
         'commanderField': commanderField.name,
@@ -1002,27 +1028,107 @@ class Repo {
   Future<void> finishLeague(Tournament t) => tDoc(t.code).update(
       {'status': 'finished', 'timerEnds': null, 'timerPaused': null});
 
-  // ---------- catálogo de logros (mantenedor) ----------
-  CollectionReference<Map<String, dynamic>> achCatalogOf(String? owner) =>
+  // ---------- listas de logros (mantenedor) ----------
+  /// Catálogo antiguo (antes de las listas): se migra a una lista.
+  CollectionReference<Map<String, dynamic>> _legacyAch(String? owner) =>
       _db.collection('rosters/${_o(owner)}/achievements');
 
-  Stream<List<Achievement>> achievementCatalog({String? owner}) =>
-      achCatalogOf(owner).snapshots().map(
+  CollectionReference<Map<String, dynamic>> achListsOf(String? owner) =>
+      _db.collection('rosters/${_o(owner)}/achLists');
+
+  CollectionReference<Map<String, dynamic>> achCatalogOf(
+          String? owner, String listId) =>
+      _db.collection('rosters/${_o(owner)}/achLists/$listId/achievements');
+
+  Stream<List<AchList>> achLists({String? owner}) =>
+      achListsOf(owner).snapshots().map((q) =>
+          q.docs.map((d) => AchList.fromMap(d.id, d.data())).toList()
+            ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase())));
+
+  Future<String> createAchList(String name, {String? owner}) async {
+    final ref = achListsOf(owner).doc();
+    await ref.set({'name': name, 'active': true, 'count': 0, 'createdAt': now});
+    return ref.id;
+  }
+
+  Future<void> updateAchList(String id,
+          {String? owner, String? name, bool? active}) =>
+      achListsOf(owner).doc(id).update({
+        if (name != null) 'name': name,
+        if (active != null) 'active': active,
+        'updatedAt': now,
+      });
+
+  Future<void> deleteAchList(String id, {String? owner}) async {
+    final q = await achCatalogOf(owner, id).get();
+    final b = _db.batch();
+    for (final d in q.docs) {
+      b.delete(d.reference);
+    }
+    b.delete(achListsOf(owner).doc(id));
+    await b.commit();
+  }
+
+  /// Si quedan logros del catálogo antiguo, los pasa a una lista "Logros".
+  Future<void> migrateLegacyAchievements({String? owner}) async {
+    final q = await _legacyAch(owner).get();
+    if (q.docs.isEmpty) return;
+    final ref = achListsOf(owner).doc('logros');
+    final writes = <void Function(WriteBatch)>[
+      (b) => b.set(ref, {
+            'name': 'Logros',
+            'active': true,
+            'count': q.docs.length,
+            'createdAt': now,
+          }, SetOptions(merge: true)),
+      for (final d in q.docs) ...[
+        (b) => b.set(achCatalogOf(owner, ref.id).doc(d.id), d.data()),
+        (b) => b.delete(d.reference),
+      ],
+    ];
+    for (var i = 0; i < writes.length; i += 400) {
+      final b = _db.batch();
+      for (final w in writes.skip(i).take(400)) {
+        w(b);
+      }
+      await b.commit();
+    }
+  }
+
+  Stream<List<Achievement>> achievementCatalog(String listId, {String? owner}) =>
+      achCatalogOf(owner, listId).snapshots().map(
       (q) => q.docs.map((d) => Achievement.fromMap(d.id, d.data())).toList()
         ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase())));
 
-  Future<void> saveAchievement(Achievement a, {String? owner}) =>
-      achCatalogOf(owner).doc(a.id).set({...a.toMap(), 'updatedAt': now});
+  Future<List<Achievement>> achievementsOnce(String listId, {String? owner}) async {
+    final q = await achCatalogOf(owner, listId).get();
+    return q.docs.map((d) => Achievement.fromMap(d.id, d.data())).toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  }
 
-  Future<void> deleteAchievement(String id, {String? owner}) =>
-      achCatalogOf(owner).doc(id).delete();
+  Future<void> _recount(String listId, String? owner) async {
+    final n = (await achCatalogOf(owner, listId).count().get()).count ?? 0;
+    await achListsOf(owner).doc(listId).update({'count': n});
+  }
 
-  Future<void> importAchievements(List<Achievement> list, {String? owner}) async {
+  Future<void> saveAchievement(String listId, Achievement a, {String? owner}) async {
+    await achCatalogOf(owner, listId).doc(a.id).set({...a.toMap(), 'updatedAt': now});
+    await _recount(listId, owner);
+  }
+
+  Future<void> deleteAchievement(String listId, String id, {String? owner}) async {
+    await achCatalogOf(owner, listId).doc(id).delete();
+    await _recount(listId, owner);
+  }
+
+  Future<void> importAchievements(String listId, List<Achievement> list,
+      {String? owner}) async {
     final b = _db.batch();
     for (final a in list) {
-      b.set(achCatalogOf(owner).doc(a.id), {...a.toMap(), 'updatedAt': now});
+      b.set(achCatalogOf(owner, listId).doc(a.id), {...a.toMap(), 'updatedAt': now});
     }
     await b.commit();
+    await _recount(listId, owner);
   }
 
   // ---------- mantenedor de jugadores ----------
@@ -1301,7 +1407,12 @@ class Repo {
       'voteQuestions': qs,
     });
     final ps = await people.get();
-    final achs = await achCatalogOf(null).get();
+    await migrateLegacyAchievements();
+    final lists = await achListsOf(null).get();
+    final achs = [
+      for (final l in lists.docs)
+        for (final d in (await achCatalogOf(null, l.id).get()).docs) (l.id, d),
+    ];
     final writes = <(DocumentReference<Map<String, dynamic>>, Map<String, dynamic>)>[
       for (final d in ps.docs)
         (
@@ -1313,7 +1424,8 @@ class Repo {
             'copiedAt': now,
           }
         ),
-      for (final d in achs.docs) (achCatalogOf(dest).doc(d.id), d.data()),
+      for (final l in lists.docs) (achListsOf(dest).doc(l.id), l.data()),
+      for (final (lid, d) in achs) (achCatalogOf(dest, lid).doc(d.id), d.data()),
     ];
     for (var i = 0; i < writes.length; i += 400) {
       final b = _db.batch();
