@@ -119,7 +119,7 @@ class _AchievementSelectorState extends State<AchievementSelector> {
           Wrap(spacing: 6, runSpacing: 6, children: [
             for (final a in all)
               FilterChip(
-                label: Text('${a.name} (${a.points})'),
+                label: Text('${a.name} (${a.points > 0 ? '+' : ''}${a.points})'),
                 tooltip: '${kAchTypeLabels[a.type]} · ${a.description}',
                 selected: selIds.contains(a.id),
                 onSelected: (v) {
@@ -208,7 +208,7 @@ class ClaimCard extends StatelessWidget {
                 style: const TextStyle(fontWeight: FontWeight.w600)),
             Text(
                 [
-                  '${a.points} pts${a.bonus != 0 ? ' (+${a.bonus} si ganas)' : ''}',
+                  '${a.points > 0 ? '+' : ''}${a.points} pts',
                   kAchTypeLabels[a.type]!,
                   if (a.description.isNotEmpty) a.description,
                 ].join(' · '),

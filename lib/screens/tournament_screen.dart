@@ -1088,6 +1088,19 @@ class _SettingsFormState extends State<_SettingsForm> {
         padding: const EdgeInsets.all(12),
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           const Text('Configuración', style: TextStyle(fontWeight: FontWeight.w700)),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.event, color: kGold),
+            title: Text('Fecha: ${fmtDate(t.eventDate)}'),
+            subtitle: const Text('Toca para cambiarla (se guarda al instante)'),
+            onTap: () async {
+              final d = await pickDate(
+                  context, DateTime.fromMillisecondsSinceEpoch(t.eventDate));
+              if (d == null || !context.mounted) return;
+              await guard(context,
+                  () => Repo.i.setDate(t.code, d.millisecondsSinceEpoch));
+            },
+          ),
           Row(children: [_f('rounds', 'Rondas'), _f('min', 'Minutos')]),
           Row(children: [_f('win', 'Victoria'), _f('draw', 'Empate'), _f('loss', 'Derrota')]),
           Row(children: [_f('p2', '2º lugar'), _f('p3', '3º lugar'), _f('bye', 'Bye')]),

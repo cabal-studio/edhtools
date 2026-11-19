@@ -151,9 +151,15 @@ class _HistoryTileState extends State<_HistoryTile> {
           final pos = s.me == null
               ? ''
               : ' · #${s.me!.rank} de ${s.total} · ${s.me!.pts} pts';
-          sub = '$role$status$pos';
+          final date = fmtDate(s.t.eventDate);
+          sub = '${date.isEmpty ? '' : '$date · '}$role$status$pos';
         }
+        final active = s?.t.isActive ?? false;
         return Card(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: active ? kOk : kLine, width: active ? 2 : 1),
+          ),
           child: ListTile(
             leading: Icon(
                 s != null && s.me != null && s.me!.rank <= 3 && s.t.status == 'finished'

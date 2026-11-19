@@ -614,6 +614,19 @@ class _LeagueSettingsFormState extends State<_LeagueSettingsForm> {
         padding: const EdgeInsets.all(12),
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           const Text('Configuración de la liga', style: TextStyle(fontWeight: FontWeight.w700)),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.event, color: kGold),
+            title: Text('Inicio: ${fmtDate(t.eventDate)}'),
+            subtitle: const Text('Toca para cambiarla (se guarda al instante)'),
+            onTap: () async {
+              final d = await pickDate(
+                  context, DateTime.fromMillisecondsSinceEpoch(t.eventDate));
+              if (d == null || !context.mounted) return;
+              await guard(context,
+                  () => Repo.i.setDate(t.code, d.millisecondsSinceEpoch));
+            },
+          ),
           Row(children: [_f('min', 'Minutos por ronda'), _f('max', 'Puntajes máximos (0 = todos)')]),
           Row(children: [_f('win', 'Victoria'), _f('draw', 'Empate'), _f('loss', 'Derrota')]),
           Row(children: [_f('p2', '2º lugar'), _f('p3', '3º lugar'), _f('bye', 'Bye')]),

@@ -31,17 +31,15 @@ class Achievement {
   final String name;
   final String description;
   final AchType type;
-  final num points;
 
-  /// Puntos extra si quien obtiene el logro además gana su mesa en la ronda.
-  final num bonus;
+  /// Puntos que suma el logro (pueden ser negativos: restan al puntaje).
+  final num points;
   const Achievement({
     required this.id,
     required this.name,
     this.description = '',
     this.type = AchType.player,
     this.points = 1,
-    this.bonus = 0,
   });
 
   factory Achievement.fromMap(String id, Map<String, dynamic> m) => Achievement(
@@ -50,7 +48,6 @@ class Achievement {
         description: (m['description'] as String?) ?? '',
         type: achTypeFrom(m['type']),
         points: asNum(m['points'], 0),
-        bonus: asNum(m['bonus'], 0),
       );
 
   Map<String, dynamic> toMap() => {
@@ -58,7 +55,6 @@ class Achievement {
         'description': description,
         'type': type.name,
         'points': points,
-        'bonus': bonus,
       };
 
   Achievement copyWith({
@@ -66,7 +62,6 @@ class Achievement {
     String? description,
     AchType? type,
     num? points,
-    num? bonus,
   }) =>
       Achievement(
         id: id,
@@ -74,7 +69,6 @@ class Achievement {
         description: description ?? this.description,
         type: type ?? this.type,
         points: points ?? this.points,
-        bonus: bonus ?? this.bonus,
       );
 }
 
@@ -204,7 +198,8 @@ List<List<String>> _csvRows(String text, String sep) {
   return rows;
 }
 
-/// Lee logros desde CSV con columnas: Nombre, Descripcion, Tipo, Puntos, Bono Puntos.
+/// Lee logros desde CSV con columnas: Nombre, Descripcion, Tipo, Puntos.
+/// (Una quinta columna, de versiones anteriores, se ignora.)
 /// Acepta coma o punto y coma como separador y una fila de encabezado opcional.
 /// Tipo: Automático | Una vez por jugador | Una vez por ronda | Sin límite.
 CsvResult parseAchievementsCsv(String text, {Set<String> takenIds = const {}}) {
@@ -237,9 +232,8 @@ CsvResult parseAchievementsCsv(String text, {Set<String> takenIds = const {}}) {
     num? parseNum(String s) =>
         s.isEmpty ? 0 : num.tryParse(s.replaceAll(',', '.'));
     final pts = parseNum(col(3));
-    final bonus = parseNum(col(4));
-    if (pts == null || bonus == null) {
-      errors.add('Fila $line ("$name"): puntos o bono no son números');
+    if (pts == null) {
+      errors.add('Fila $line ("$name"): los puntos no son un número');
       continue;
     }
     final id = achIdFromName(name, taken);
@@ -249,8 +243,7 @@ CsvResult parseAchievementsCsv(String text, {Set<String> takenIds = const {}}) {
         name: name,
         description: col(1),
         type: type,
-        points: pts,
-        bonus: bonus));
+        points: pts));
   }
   return CsvResult(items, errors);
 }
@@ -258,14 +251,13 @@ CsvResult parseAchievementsCsv(String text, {Set<String> takenIds = const {}}) {
 String achievementsToCsv(List<Achievement> list) {
   String q(String s) =>
       s.contains(RegExp('[",;\n]')) ? '"${s.replaceAll('"', '""')}"' : s;
-  final b = StringBuffer('Nombre,Descripcion,Tipo,Puntos,Bono Puntos\n');
+  final b = StringBuffer('Nombre,Descripcion,Tipo,Puntos\n');
   for (final a in list) {
     b.writeln([
       q(a.name),
       q(a.description),
       kAchTypeLabels[a.type]!,
       '${a.points}',
-      '${a.bonus}',
     ].join(','));
   }
   return b.toString();
@@ -322,15 +314,13 @@ class LeagueStanding {
 }
 
 /// Puntaje de cada jugador en una ronda: resultado de mesa (o bye) +
-/// puntos de logros + bono de los logros si ganó su mesa.
+/// puntos de logros (que pueden ser negativos).
 Map<String, num> leagueRoundScores(RoundData r, Points pts,
     Map<String, Achievement> achs, Iterable<Claim> claims) {
   final out = <String, num>{};
-  final won = <String>{};
   for (final tb in r.tables) {
     for (final p in tb.seats) {
       out[p] = (out[p] ?? 0) + pts.forResult(tb.res[p]);
-      if (tb.res[p] == 'W') won.add(p);
     }
   }
   for (final p in r.byes) {
@@ -339,7 +329,7 @@ Map<String, num> leagueRoundScores(RoundData r, Points pts,
   for (final c in claims.where((c) => c.round == r.n)) {
     final a = achs[c.ach];
     if (a == null) continue;
-    out[c.pid] = (out[c.pid] ?? 0) + a.points + (won.contains(c.pid) ? a.bonus : 0);
+    out[c.pid] = (out[c.pid] ?? 0) + a.points;
   }
   return out;
 }

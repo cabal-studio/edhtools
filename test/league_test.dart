@@ -14,17 +14,18 @@ void main() {
 
   group('CSV de logros', () {
     test('lee encabezado, coma y tipos en español', () {
-      const csv = 'Nombre,Descripcion,Tipo,Puntos,Bono Puntos\n'
-          'Primera sangre,Hacer el primer daño,Una vez por ronda,1,0\n'
-          '"Comandante, al fin",Lanzar tu comandante,Una vez por jugador,1,2\n'
-          'Asistencia,Llegar a tiempo,Automático,1,0\n'
-          'Combo,Ganar con combo,Sin límite,2,1\n';
+      const csv = 'Nombre,Descripcion,Tipo,Puntos\n'
+          'Primera sangre,Hacer el primer daño,Una vez por ronda,1\n'
+          '"Comandante, al fin",Lanzar tu comandante,Una vez por jugador,1\n'
+          'Asistencia,Llegar a tiempo,Automático,1\n'
+          // Una quinta columna (formato antiguo con bono) se ignora.
+          'Rendirse,Conceder la partida,Sin límite,-2,1\n';
       final r = parseAchievementsCsv(csv);
       expect(r.errors, isEmpty);
       expect(r.items.length, 4);
       expect(r.items[0].type, AchType.round);
       expect(r.items[1].name, 'Comandante, al fin');
-      expect(r.items[1].bonus, 2);
+      expect(r.items[3].points, -2);
       expect(r.items[2].type, AchType.auto);
       expect(r.items[3].type, AchType.unlimited);
       expect(r.items.map((a) => a.id).toSet().length, 4);
@@ -48,7 +49,8 @@ void main() {
 
   group('puntaje de liga', () {
     final achs = {
-      'a': const Achievement(id: 'a', name: 'A', points: 1, bonus: 2),
+      'a': const Achievement(id: 'a', name: 'A', points: 1),
+      'neg': const Achievement(id: 'neg', name: 'Neg', points: -2),
       'b': const Achievement(id: 'b', name: 'B', points: 3),
     };
     RoundData ronda(int n, Map<String, String> res) => RoundData(
@@ -59,7 +61,7 @@ void main() {
           ],
         );
 
-    test('resultado + logros + bono solo si gana', () {
+    test('resultado de mesa + logros', () {
       final r = ronda(1, {'p0': 'W', 'p1': 'L', 'p2': 'L', 'p3': 'L'});
       final claims = [
         const Claim(id: '1', round: 1, pid: 'p0', ach: 'a'),
@@ -67,9 +69,25 @@ void main() {
         const Claim(id: '3', round: 1, pid: 'p1', ach: 'b'),
       ];
       final s = leagueRoundScores(r, pts, achs, claims);
-      expect(s['p0'], 5 + 1 + 2); // gana: logro + bono
-      expect(s['p1'], 0 + 1 + 3); // pierde: sin bono
+      expect(s['p0'], 5 + 1);
+      expect(s['p1'], 0 + 1 + 3);
       expect(s['p2'], 0);
+    });
+
+    test('logros negativos restan puntos', () {
+      final r = ronda(1, {'p0': 'W', 'p1': 'L', 'p2': 'L', 'p3': 'L'});
+      final claims = [
+        const Claim(id: '1', round: 1, pid: 'p0', ach: 'neg'),
+        const Claim(id: '2', round: 1, pid: 'p1', ach: 'neg'),
+      ];
+      final s = leagueRoundScores(r, pts, achs, claims);
+      expect(s['p0'], 5 - 2);
+      expect(s['p1'], -2, reason: 'el puntaje de ronda puede quedar negativo');
+      final st = computeLeagueStandings(
+          rounds: [r], players: makePlayers(4), pts: pts,
+          achievements: achs, claims: claims);
+      expect(st.last.id, 'p1');
+      expect(st.last.total, -2);
     });
 
     test('puntajes máximos: mejores N rondas', () {

@@ -45,6 +45,23 @@ ThemeData buildTheme() {
 
 String fmtPct(double x) => '${(x * 100).toStringAsFixed(1)}%';
 
+/// Fecha dd-mm-aaaa desde epoch ms ('' si no hay).
+String fmtDate(int ms) {
+  if (ms <= 0) return '';
+  final d = DateTime.fromMillisecondsSinceEpoch(ms);
+  String two(int v) => v.toString().padLeft(2, '0');
+  return '${two(d.day)}-${two(d.month)}-${d.year}';
+}
+
+/// Elige una fecha con el calendario.
+Future<DateTime?> pickDate(BuildContext context, DateTime initial) =>
+    showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(2024),
+      lastDate: DateTime(2100),
+    );
+
 void toast(BuildContext context, String msg) {
   ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()

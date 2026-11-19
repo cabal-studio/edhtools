@@ -61,6 +61,17 @@ class Tournament {
   final int maxScores;
   final ShareMode shareAchievements;
 
+  final int createdAt;
+
+  /// Fecha de realización elegida por el organizador (epoch ms), o null.
+  final int? date;
+
+  /// Fecha a mostrar: la de realización o, si no hay, la de creación.
+  int get eventDate => date ?? createdAt;
+
+  /// Abierto o en curso (no finalizado).
+  bool get isActive => status != 'finished';
+
   bool get isLeague => type == 'league';
   List<Achievement> get achievementList => [
         for (final id in achOrder)
@@ -100,7 +111,9 @@ class Tournament {
         tiebreakers =
             List<String>.from(m['tiebreakers'] ?? kDefaultTiebreakers),
         maxScores = asInt(m['maxScores']),
-        shareAchievements = shareModeFrom(m['shareAchievements']);
+        shareAchievements = shareModeFrom(m['shareAchievements']),
+        createdAt = asInt(m['createdAt']),
+        date = m['date'] is num ? asInt(m['date']) : null;
 
   bool get asksDeck =>
       commanderField != FieldMode.off || deckListField != FieldMode.off;
@@ -327,6 +340,7 @@ class Repo {
     FieldMode deckListField = FieldMode.off,
     ShareMode shareDecks = ShareMode.end,
     ShareMode shareVotes = ShareMode.never,
+    int? date,
     Map<String, dynamic> extra = const {},
   }) async {
     for (var attempt = 0; attempt < 8; attempt++) {
@@ -355,6 +369,7 @@ class Repo {
           'shareDecks': shareDecks.name,
           'shareVotes': shareVotes.name,
           'createdAt': now,
+          'date': date ?? now,
           ...extra,
         });
         return true;
@@ -696,8 +711,10 @@ class Repo {
     required List<String> tiebreakers,
     required int maxScores,
     required ShareMode shareAchievements,
+    int? date,
   }) =>
       createTournament(
+        date: date,
         name: name,
         rounds: 0,
         roundMinutes: roundMinutes,
@@ -749,6 +766,9 @@ class Repo {
         ..._leagueFields(achievementsOn, achievements, tiebreakers, maxScores,
             shareAchievements),
       });
+
+  Future<void> setDate(String code, int ms) =>
+      tDoc(code).update({'date': ms});
 
   /// Busca una clave: torneo/liga (6 caracteres) o clave de ronda de liga.
   Future<({String code, int? round})?> resolveKey(String key) async {

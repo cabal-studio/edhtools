@@ -100,7 +100,6 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                   subtitle: Text([
                     kAchTypeLabels[a.type]!,
                     '${a.points} pts',
-                    if (a.bonus != 0) 'bono ${a.bonus}',
                     if (a.description.isNotEmpty) a.description,
                   ].join(' · ')),
                   onTap: () => _edit(a),
@@ -147,7 +146,6 @@ class _AchDialogState extends State<_AchDialog> {
   late final _name = TextEditingController(text: widget.a?.name ?? '');
   late final _desc = TextEditingController(text: widget.a?.description ?? '');
   late final _pts = TextEditingController(text: '${widget.a?.points ?? 1}');
-  late final _bonus = TextEditingController(text: '${widget.a?.bonus ?? 0}');
   late AchType type = widget.a?.type ?? AchType.player;
   String? error;
 
@@ -195,24 +193,16 @@ class _AchDialogState extends State<_AchDialog> {
               ),
             ),
             const SizedBox(height: 8),
-            Row(children: [
-              Expanded(
-                child: TextField(
-                    controller: _pts,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                    decoration: const InputDecoration(labelText: 'Puntos')),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: TextField(
-                    controller: _bonus,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                    decoration: const InputDecoration(labelText: 'Bono puntos')),
-              ),
-            ]),
+            TextField(
+                controller: _pts,
+                keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true, signed: true),
+                decoration: const InputDecoration(
+                    labelText: 'Puntos', hintText: 'Ej: 1, 2 o -1')),
             const Padding(
               padding: EdgeInsets.only(top: 4),
-              child: Text('El bono se suma si quien obtiene el logro además gana su mesa.',
+              child: Text(
+                  'Pueden ser negativos: un logro con -1 resta un punto al jugador que lo obtiene.',
                   style: TextStyle(color: kMuted, fontSize: 12)),
             ),
             if (error != null)
@@ -231,10 +221,9 @@ class _AchDialogState extends State<_AchDialog> {
           onPressed: () {
             final name = _name.text.trim();
             final pts = num.tryParse(_pts.text.trim().replaceAll(',', '.'));
-            final bonus = num.tryParse(_bonus.text.trim().replaceAll(',', '.'));
             if (name.isEmpty) return setState(() => error = 'Falta el nombre');
-            if (pts == null || bonus == null) {
-              return setState(() => error = 'Puntos y bono deben ser números');
+            if (pts == null) {
+              return setState(() => error = 'Los puntos deben ser un número (puede ser negativo)');
             }
             final id = widget.a?.id ?? achIdFromName(name, widget.taken);
             Navigator.pop(
@@ -244,8 +233,7 @@ class _AchDialogState extends State<_AchDialog> {
                     name: name,
                     description: _desc.text.trim(),
                     type: type,
-                    points: pts,
-                    bonus: bonus));
+                    points: pts));
           },
           child: const Text('Guardar'),
         ),
@@ -294,7 +282,7 @@ class _CsvDialogState extends State<_CsvDialog> {
         child: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             const Text(
-                'Columnas: Nombre, Descripcion, Tipo, Puntos, Bono Puntos.\n'
+                'Columnas: Nombre, Descripcion, Tipo, Puntos (pueden ser negativos).\n'
                 'Tipo: Automático, Una vez por jugador, Una vez por ronda o Sin límite.\n'
                 'Separador coma o punto y coma; la fila de encabezado es opcional.',
                 style: TextStyle(color: kMuted, fontSize: 12.5)),
@@ -310,7 +298,7 @@ class _CsvDialogState extends State<_CsvDialog> {
               style: const TextStyle(fontFamily: 'monospace', fontSize: 12.5),
               decoration: const InputDecoration(
                   hintText:
-                      'Nombre,Descripcion,Tipo,Puntos,Bono Puntos\nPrimera sangre,Hacer el primer daño,Una vez por ronda,1,0'),
+                      'Nombre,Descripcion,Tipo,Puntos\nPrimera sangre,Hacer el primer daño,Una vez por ronda,1\nRendirse,Conceder la partida,Una vez por jugador,-1'),
             ),
           ]),
         ),

@@ -5,6 +5,7 @@ import '../data/repo.dart';
 import '../logic/league.dart';
 import '../logic/swiss.dart';
 import '../widgets/league_widgets.dart';
+import '../widgets/tournament_tile.dart';
 import 'achievements_screen.dart';
 import '../ui/theme.dart';
 import 'roster_screen.dart';
@@ -40,6 +41,7 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
   List<String> _tbs = List.of(kDefaultTiebreakers);
   final _max = TextEditingController(text: '0');
   ShareMode _shareAch = ShareMode.end;
+  DateTime _date = DateTime.now();
 
   num _n(TextEditingController c, num d) => num.tryParse(c.text.trim()) ?? d;
 
@@ -71,6 +73,7 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
                   : _tbs.where((k) => !k.startsWith('ach:')).toList(),
               maxScores: _n(_max, 0).toInt().abs(),
               shareAchievements: _shareAch,
+              date: _date.millisecondsSinceEpoch,
             )
           : await Repo.i.createTournament(
         name: _name.text.trim().isEmpty ? 'Torneo Commander' : _name.text.trim(),
@@ -88,6 +91,7 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
         deckListField: _list,
         shareDecks: _shareDecks,
         shareVotes: _shareVotes,
+        date: _date.millisecondsSinceEpoch,
       );
       if (!mounted) return;
       Navigator.push(context,
@@ -187,6 +191,17 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
                       controller: _name,
                       decoration: const InputDecoration(
                           labelText: 'Nombre', hintText: 'Commander Night #12')),
+                  const SizedBox(height: 6),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.event, color: kGold),
+                    title: Text('${_league ? 'Inicio' : 'Fecha'}: ${fmtDate(_date.millisecondsSinceEpoch)}'),
+                    subtitle: const Text('Toca para cambiarla'),
+                    onTap: () async {
+                      final d = await pickDate(context, _date);
+                      if (d != null) setState(() => _date = d);
+                    },
+                  ),
                   const SizedBox(height: 10),
                   Row(children: [
                     if (!_league) ...[
@@ -318,21 +333,7 @@ class _MyList extends StatelessWidget {
         child: Text(title.toUpperCase(),
             style: const TextStyle(color: kMuted, fontSize: 12)),
       ),
-      for (final t in items)
-        Card(
-          child: ListTile(
-            title: Text(t.name),
-            trailing: Text(t.code,
-                style: const TextStyle(
-                    fontFamily: 'monospace',
-                    color: kGoldLight,
-                    letterSpacing: 2)),
-            onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) => TournamentScreen(code: t.code))),
-          ),
-        ),
+      for (final t in items) TournamentTile(key: ValueKey(t.code), ref: t),
       const SizedBox(height: 8),
     ]);
   }

@@ -1,8 +1,8 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import '../data/auth.dart';
 import '../ui/theme.dart';
+import '../widgets/account_card.dart';
 import 'history_screen.dart';
 import 'organize_screen.dart';
 import 'play_screen.dart';
@@ -15,7 +15,7 @@ class HomeScreen extends StatelessWidget {
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.userChanges(),
       builder: (context, _) => Scaffold(
-        appBar: AppBar(actions: const [_AccountButton()]),
+        appBar: AppBar(actions: const [AccountChip()]),
         body: SafeArea(
           child: ListView(
             padding: const EdgeInsets.all(20),
@@ -32,7 +32,9 @@ class HomeScreen extends StatelessWidget {
               const Text('Torneos EDH en mesas de 4 · suizo · desempates MTG',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: kMuted)),
-              const SizedBox(height: 28),
+              const SizedBox(height: 20),
+              const AccountCard(),
+              const SizedBox(height: 14),
               _BigButton(
                 icon: Icons.sports_esports,
                 title: 'Jugar torneo',
@@ -105,40 +107,6 @@ class _BigButton extends StatelessWidget {
           ]),
         ),
       ),
-    );
-  }
-}
-
-class _AccountButton extends StatelessWidget {
-  const _AccountButton();
-
-  @override
-  Widget build(BuildContext context) {
-    final google = Auth.isGoogle;
-    return PopupMenuButton<String>(
-      icon: Icon(google ? Icons.account_circle : Icons.person_outline),
-      itemBuilder: (_) => [
-        PopupMenuItem(
-            enabled: false,
-            child: Text(google
-                ? 'Conectado: ${Auth.email ?? 'Google'}'
-                : 'Invitado (sin cuenta)')),
-        if (!google)
-          const PopupMenuItem(
-              value: 'google', child: Text('Vincular cuenta de Google')),
-        if (google)
-          const PopupMenuItem(value: 'out', child: Text('Cerrar sesión')),
-      ],
-      onSelected: (v) => guard(context, () async {
-        if (v == 'google') {
-          await Auth.connectGoogle();
-          if (context.mounted) {
-            toast(context, 'Cuenta vinculada: úsala en web y otros teléfonos');
-          }
-        } else if (v == 'out') {
-          await Auth.signOut();
-        }
-      }),
     );
   }
 }
