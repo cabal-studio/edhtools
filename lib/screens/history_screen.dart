@@ -84,12 +84,16 @@ class _HistoryTileState extends State<_HistoryTile> {
       future: _f,
       builder: (context, snap) {
         final s = snap.data;
+        // Torneos borrados no se muestran.
+        if (snap.connectionState == ConnectionState.done && s == null) {
+          return const SizedBox.shrink();
+        }
         final uid = FirebaseAuth.instance.currentUser!.uid;
         String sub;
         if (snap.connectionState != ConnectionState.done) {
           sub = 'Cargando…';
         } else if (s == null) {
-          sub = 'Ya no disponible';
+          sub = '';
         } else {
           final status = switch (s.t.status) {
             'registration' => 'Inscripción',
