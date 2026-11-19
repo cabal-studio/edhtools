@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -118,7 +119,48 @@ class Vote {
 
 class MyTournamentRef {
   final String code, name;
-  MyTournamentRef(this.code, this.name);
+
+  /// Id del jugador dentro del torneo (null = el propio uid).
+  final String? pid;
+  MyTournamentRef(this.code, this.name, {this.pid});
+}
+
+/// Torneo en el que participó una persona del mantenedor.
+class RosterTournament {
+  final String code, name, pid;
+  final int at;
+  RosterTournament(this.code, this.name, this.pid, this.at);
+  factory RosterTournament.fromMap(Map<String, dynamic> m) => RosterTournament(
+      '${m['code']}', '${m['name']}', '${m['pid']}', asInt(m['at']));
+  Map<String, dynamic> toMap() =>
+      {'code': code, 'name': name, 'pid': pid, 'at': at};
+}
+
+/// Ficha de un jugador en el mantenedor del organizador (o comunidad).
+///  * kind 'manual': lo agregó el organizador; id automático.
+///  * kind 'app': tiene cuenta en la app; id = su uid.
+class RosterPerson {
+  final String id;
+  final String nick;
+  final String kind;
+  final String? uid;
+  final bool google;
+  final List<RosterTournament> tournaments;
+  final List<String> mergedFrom;
+  RosterPerson.fromMap(this.id, Map<String, dynamic> m)
+      : nick = (m['nick'] as String?) ?? '¿?',
+        kind = (m['kind'] as String?) ?? 'manual',
+        uid = m['uid'] as String?,
+        google = m['google'] == true,
+        tournaments = ((m['tournaments'] as List?) ?? const [])
+            .map((e) => RosterTournament.fromMap(Map<String, dynamic>.from(e)))
+            .toList()
+          ..sort((a, b) => b.at.compareTo(a.at)),
+        mergedFrom = List<String>.from(m['mergedFrom'] ?? const []);
+  bool get isManual => kind == 'manual';
+
+  /// Torneos distintos (un torneo puede aparecer dos veces tras una fusión).
+  int get tournamentCount => tournaments.map((t) => t.code).toSet().length;
 }
 
 /// Acceso a Firestore. Estructura:
@@ -146,6 +188,14 @@ class Repo {
   DocumentReference<Map<String, dynamic>> voteDoc(String code, int n) =>
       _db.doc('tournaments/$code/votes/r$n-$uid');
   DocumentReference<Map<String, dynamic>> get meDoc => _db.doc('users/$uid');
+
+  /// Dueño de los mantenedores. Hoy es el propio organizador; a futuro podrá
+  /// ser una comunidad de organizadores (rosters/{comunidad}).
+  String get ownerId => uid;
+  DocumentReference<Map<String, dynamic>> get ownerDoc =>
+      _db.doc('rosters/$ownerId');
+  CollectionReference<Map<String, dynamic>> get people =>
+      _db.collection('rosters/$ownerId/people');
 
   // ---------- lecturas en vivo ----------
   Stream<Tournament?> tournament(String code) => tDoc(code)
@@ -369,15 +419,53 @@ class Repo {
 
   Future<void> setVoteQuestions(String code, int n, List<String> qs) async {
     await roundDoc(code, n).update({'voteQuestions': qs});
-    if (qs.isNotEmpty) {
-      await meDoc.set({'voteQuestions': FieldValue.arrayUnion(qs)},
-          SetOptions(merge: true));
-    }
+    if (qs.isNotEmpty) await saveVoteQuestions(qs);
   }
 
-  Future<void> forgetVoteQuestion(String q) => meDoc.set({
-        'voteQuestions': FieldValue.arrayRemove([q])
+  /// Preguntas guardadas del dueño (incluye las de la versión anterior,
+  /// que se guardaban en users/{uid}).
+  Stream<List<String>> voteQuestions() {
+    late StreamController<List<String>> ctrl;
+    List<String> a = const [], b = const [];
+    StreamSubscription? s1, s2;
+    void emit() => ctrl.add({...a, ...b}.toList()..sort());
+    ctrl = StreamController<List<String>>(
+      onListen: () {
+        s1 = ownerDoc.snapshots().listen((d) {
+          a = List<String>.from(d.data()?['voteQuestions'] ?? const []);
+          emit();
+        }, onError: ctrl.addError);
+        s2 = meDoc.snapshots().listen((d) {
+          b = List<String>.from(d.data()?['voteQuestions'] ?? const []);
+          emit();
+        }, onError: ctrl.addError);
+      },
+      onCancel: () async {
+        await s1?.cancel();
+        await s2?.cancel();
+      },
+    );
+    return ctrl.stream;
+  }
+
+  Future<void> saveVoteQuestions(List<String> qs) => ownerDoc.set({
+        'ownerId': ownerId,
+        'voteQuestions': FieldValue.arrayUnion(qs),
       }, SetOptions(merge: true));
+
+  Future<void> forgetVoteQuestion(String q) async {
+    await ownerDoc.set({
+      'voteQuestions': FieldValue.arrayRemove([q])
+    }, SetOptions(merge: true));
+    await meDoc.set({
+      'voteQuestions': FieldValue.arrayRemove([q])
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> renameVoteQuestion(String from, String to) async {
+    await forgetVoteQuestion(from);
+    await saveVoteQuestions([to]);
+  }
 
   /// Preparación → ronda en juego (arranca el reloj).
   Future<void> startRound(Tournament t) => tDoc(t.code).update({
@@ -491,11 +579,146 @@ class Repo {
   Future<void> resetTimer(Tournament t) => tDoc(t.code).update(
       {'timerEnds': now + t.roundMinutes * 60000, 'timerPaused': null});
 
+  // ---------- mantenedor de jugadores ----------
+  Stream<List<RosterPerson>> rosterPeople() => people.snapshots().map((q) =>
+      q.docs.map((d) => RosterPerson.fromMap(d.id, d.data())).toList()
+        ..sort((a, b) => a.nick.toLowerCase().compareTo(b.nick.toLowerCase())));
+
+  Stream<RosterPerson?> rosterPerson(String id) => people
+      .doc(id)
+      .snapshots()
+      .map((d) => d.exists ? RosterPerson.fromMap(d.id, d.data()!) : null);
+
+  /// Referencia estable (sin la hora actual) para que arrayUnion no duplique.
+  Map<String, dynamic> _tRef(Tournament t, String pid, int at) =>
+      RosterTournament(t.code, t.name, pid, at).toMap();
+
+  /// Agrega un jugador al torneo desde el organizador:
+  ///  * con [rosterId]: alguien que ya está en el mantenedor (se reutiliza)
+  ///  * sin [rosterId]: jugador nuevo; se crea su ficha manual.
+  Future<void> addPlayerFromRoster(Tournament t, String nick,
+      {String? rosterId, DeckInfo deck = const DeckInfo()}) async {
+    final rid = rosterId ?? people.doc().id;
+    final ts = now;
+    if (rosterId == null) {
+      await people.doc(rid).set({
+        'nick': nick,
+        'kind': 'manual',
+        'uid': null,
+        'google': false,
+        'tournaments': [],
+        'createdAt': now,
+      });
+    }
+    final ref = await _db.collection('tournaments/${t.code}/players').add({
+      'nick': nick,
+      'uid': null,
+      'rosterId': rid,
+      'dropped': false,
+      'joinedAt': ts,
+    });
+    if (!deck.isEmpty) await saveDeck(t.code, ref.id, deck);
+    await people.doc(rid).set({
+      'tournaments': FieldValue.arrayUnion([_tRef(t, ref.id, ts)]),
+      'updatedAt': now,
+    }, SetOptions(merge: true));
+  }
+
+  final _synced = <String>{};
+
+  /// Registra en el mantenedor a todos los jugadores del torneo (el
+  /// organizador lo ejecuta al abrir su torneo). Los jugadores con app usan
+  /// su uid como ficha; los manuales antiguos reciben una ficha nueva.
+  Future<void> syncRoster(Tournament t, Map<String, PlayerData> ps) async {
+    for (final p in ps.values) {
+      final key = '${t.code}/${p.id}/${p.nick}/${p.google}';
+      if (_synced.contains(key)) continue;
+      _synced.add(key);
+      try {
+        if (p.uid != null) {
+          await people.doc(p.uid).set({
+            'nick': p.nick,
+            'kind': 'app',
+            'uid': p.uid,
+            'google': p.google,
+            'tournaments': FieldValue.arrayUnion([_tRef(t, p.id, p.joinedAt)]),
+            'updatedAt': now,
+          }, SetOptions(merge: true));
+        } else if (p.rosterId == null) {
+          final rid = people.doc().id;
+          await people.doc(rid).set({
+            'nick': p.nick,
+            'kind': 'manual',
+            'uid': null,
+            'google': false,
+            'tournaments': [_tRef(t, p.id, p.joinedAt)],
+            'createdAt': now,
+          });
+          await _db
+              .doc('tournaments/${t.code}/players/${p.id}')
+              .update({'rosterId': rid});
+        }
+      } catch (_) {
+        _synced.remove(key);
+      }
+    }
+  }
+
+  Future<void> renameRosterPerson(String id, String nick) =>
+      people.doc(id).update({'nick': nick, 'updatedAt': now});
+
+  /// Fusiona una ficha manual con la de una cuenta de la app (idealmente
+  /// Google): sus torneos pasan a la cuenta, que podrá verlos en su
+  /// historial, y la ficha manual se elimina.
+  Future<void> mergeRosterPeople(RosterPerson manual, RosterPerson target) async {
+    final targetUid = target.uid;
+    if (!manual.isManual || targetUid == null) {
+      throw Exception('Solo se puede fusionar una ficha manual con una cuenta de la app');
+    }
+    await people.doc(target.id).set({
+      'tournaments':
+          FieldValue.arrayUnion(manual.tournaments.map((x) => x.toMap()).toList()),
+      'mergedFrom': FieldValue.arrayUnion([manual.id]),
+      'updatedAt': now,
+    }, SetOptions(merge: true));
+    // Vincula los registros de los torneos a la cuenta.
+    for (final x in manual.tournaments) {
+      try {
+        await _db
+            .doc('tournaments/${x.code}/players/${x.pid}')
+            .update({'uid': targetUid, 'rosterId': target.id});
+      } catch (_) {
+        // Torneo borrado o de otro organizador: se omite.
+      }
+    }
+    await people.doc(manual.id).delete();
+  }
+
+  /// Torneos vinculados a mi cuenta en mantenedores de cualquier organizador
+  /// (incluye aquellos en que jugué como jugador manual y luego me fusionaron).
+  Future<List<MyTournamentRef>> linkedTournaments() async {
+    final q = await _db
+        .collectionGroup('people')
+        .where('uid', isEqualTo: uid)
+        .get();
+    final out = <MyTournamentRef>[];
+    for (final d in q.docs) {
+      final p = RosterPerson.fromMap(d.id, d.data());
+      for (final x in p.tournaments) {
+        out.add(MyTournamentRef(x.code, x.name, pid: x.pid));
+      }
+    }
+    return out;
+  }
+
   // ---------- jugador ----------
   /// Inscribe al usuario actual (jugador u organizador). Devuelve null si
   /// todo bien, o un mensaje para mostrar.
   Future<String?> join(String code, String nick,
       {DeckInfo deck = const DeckInfo()}) async {
+    final google = FirebaseAuth.instance.currentUser?.providerData
+            .any((p) => p.providerId == 'google.com') ??
+        false;
     final t = await peek(code);
     if (t == null) return 'No existe un torneo con esa clave';
     await meDoc.set({'nick': nick}, SetOptions(merge: true));
@@ -503,15 +726,20 @@ class Repo {
     final pRef = _db.doc('tournaments/$code/players/$uid');
     final p = await pRef.get();
     if (p.exists) {
-      await pRef.update({'nick': nick, 'dropped': false});
+      await pRef.update({'nick': nick, 'dropped': false, 'google': google});
       if (!deck.isEmpty) await saveDeck(code, uid, deck);
       return null;
     }
     if (t.status == 'finished') {
       return 'El torneo terminó: entras como espectador';
     }
-    await pRef.set(
-        {'nick': nick, 'uid': uid, 'dropped': false, 'joinedAt': now});
+    await pRef.set({
+      'nick': nick,
+      'uid': uid,
+      'dropped': false,
+      'joinedAt': now,
+      'google': google,
+    });
     if (!deck.isEmpty) await saveDeck(code, uid, deck);
     return switch (t.status) {
       'registration' => null,

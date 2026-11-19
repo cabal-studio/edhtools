@@ -63,15 +63,28 @@ class Points {
 class PlayerData {
   final String id;
   final String nick;
+
+  /// Cuenta de la app que usa este jugador (null si lo agregó el organizador).
   final String? uid;
   final bool dropped;
   final int joinedAt;
+
+  /// Si la cuenta es de Google (la informa el propio jugador al inscribirse).
+  final bool google;
+
+  /// Ficha del jugador en el mantenedor del organizador (jugadores manuales).
+  final String? rosterId;
   const PlayerData(
       {required this.id,
       required this.nick,
       this.uid,
       this.dropped = false,
-      this.joinedAt = 0});
+      this.joinedAt = 0,
+      this.google = false,
+      this.rosterId});
+
+  /// Ficha en el mantenedor: la cuenta para jugadores con app, o la ficha manual.
+  String? get rosterKey => uid ?? rosterId;
 
   factory PlayerData.fromMap(String id, Map<String, dynamic> m) => PlayerData(
         id: id,
@@ -79,6 +92,8 @@ class PlayerData {
         uid: m['uid'] as String?,
         dropped: m['dropped'] == true,
         joinedAt: asInt(m['joinedAt']),
+        google: m['google'] == true,
+        rosterId: m['rosterId'] as String?,
       );
 }
 

@@ -24,6 +24,7 @@ class _VoteQuestionsDialog extends StatefulWidget {
 
 class _VoteQuestionsDialogState extends State<_VoteQuestionsDialog> {
   late final List<String> qs = List.of(widget.current);
+  late final Stream<List<String>> _saved = Repo.i.voteQuestions();
   final _text = TextEditingController();
 
   void _add(String q) {
@@ -39,11 +40,10 @@ class _VoteQuestionsDialogState extends State<_VoteQuestionsDialog> {
       title: const Text('Votación especial'),
       content: SizedBox(
         width: 420,
-        child: StreamBuilder<Map<String, dynamic>>(
-          stream: Repo.i.me(),
+        child: StreamBuilder<List<String>>(
+          stream: _saved,
           builder: (context, snap) {
-            final saved = List<String>.from(
-                    (snap.data ?? const {})['voteQuestions'] ?? const [])
+            final saved = (snap.data ?? const <String>[])
                 .where((q) => !qs.contains(q))
                 .toList();
             return ListView(shrinkWrap: true, children: [
@@ -130,12 +130,22 @@ class PlayerVoteCard extends StatefulWidget {
 class _PlayerVoteCardState extends State<PlayerVoteCard> {
   Map<String, String?>? draft;
   bool sending = false;
+  late Stream<Vote?> _vote = Repo.i.myVote(widget.code, widget.round.n);
+
+  @override
+  void didUpdateWidget(PlayerVoteCard old) {
+    super.didUpdateWidget(old);
+    if (old.round.n != widget.round.n || old.code != widget.code) {
+      _vote = Repo.i.myVote(widget.code, widget.round.n);
+      draft = null;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final qs = widget.round.voteQuestions;
     return StreamBuilder<Vote?>(
-      stream: Repo.i.myVote(widget.code, widget.round.n),
+      stream: _vote,
       builder: (context, snap) {
         final sent = snap.data;
         final d = draft ?? Map<String, String?>.from(sent?.picks ?? const {});

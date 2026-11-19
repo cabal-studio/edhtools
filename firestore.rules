@@ -24,6 +24,20 @@ service cloud.firestore {
       allow read, write: if signedIn() && request.auth.uid == uid;
     }
 
+    // Mantenedores (jugadores, preguntas). Hoy el dueño es el propio
+    // organizador; a futuro, una comunidad con varios organizadores.
+    match /rosters/{owner} {
+      allow read, write: if signedIn() && request.auth.uid == owner;
+      match /people/{id} {
+        allow read, write: if signedIn() && request.auth.uid == owner;
+      }
+    }
+    // Cada persona puede leer las fichas vinculadas a su cuenta en cualquier
+    // mantenedor (para su historial de torneos).
+    match /{path=**}/people/{id} {
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
     match /tournaments/{code} {
       // Se puede abrir un torneo conociendo su clave, pero no listar todos.
       allow get: if signedIn();
@@ -44,10 +58,10 @@ service cloud.firestore {
           signedIn() && pid == request.auth.uid
           && request.resource.data.uid == request.auth.uid
           && tourn(code).status != 'finished');
-        // El jugador solo puede cambiar su nick o hacer drop.
+        // El jugador solo puede cambiar su nick, hacer drop o informar si usa Google.
         allow update: if isOrg(code) || (
           signedIn() && pid == request.auth.uid
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nick', 'dropped']));
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nick', 'dropped', 'google']));
         allow delete: if isOrg(code);
       }
 

@@ -11,6 +11,7 @@ import '../ui/theme.dart';
 import '../widgets/common.dart';
 import '../widgets/player_dialog.dart';
 import '../widgets/prep_editor.dart';
+import '../widgets/roster_picker.dart';
 import '../widgets/table_card.dart';
 import '../widgets/votes.dart';
 
@@ -54,7 +55,14 @@ class _TournamentScreenState extends State<TournamentScreen> {
   String get code => widget.code;
   String get uid => FirebaseAuth.instance.currentUser!.uid;
   bool get isOrg => t != null && t!.organizerId == uid;
-  String? get myPid => players.containsKey(uid) ? uid : null;
+  /// Mi registro en el torneo: por mi cuenta o por una ficha manual fusionada.
+  String? get myPid {
+    if (players.containsKey(uid)) return uid;
+    for (final p in players.values) {
+      if (p.uid == uid) return p.id;
+    }
+    return null;
+  }
   RoundData? get current => t == null ? null : rounds[t!.currentRound];
   List<RoundData> get roundList =>
       rounds.values.toList()..sort((a, b) => a.n.compareTo(b.n));
@@ -77,15 +85,24 @@ class _TournamentScreenState extends State<TournamentScreen> {
         loaded = true;
       });
       _syncPrivateSubs();
+      _syncRoster();
     }, onError: _onErr));
     _subs.add(_repo.players(code).listen((v) {
       setState(() => players = v);
       _syncPrivateSubs();
+      _syncRoster();
     }, onError: _onErr));
     _subs.add(_repo.rounds(code).listen((v) => setState(() => rounds = v),
         onError: _onErr));
     _subs.add(_repo.reports(code).listen((v) => setState(() => reports = v),
         onError: _onErr));
+  }
+
+  /// El organizador registra a los jugadores del torneo en su mantenedor.
+  void _syncRoster() {
+    final tt = t;
+    if (tt == null || !isOrg || players.isEmpty) return;
+    _repo.syncRoster(tt, players);
   }
 
   /// Barajas y votos son privados: se escucha la colección completa solo si
@@ -823,10 +840,23 @@ class _TournamentScreenState extends State<TournamentScreen> {
       ..sort((a, b) => a.joinedAt.compareTo(b.joinedAt));
 
     Future<void> addManual() async {
-      final f = await playerDialog(context, t,
-          title: 'Agregar jugador', okLabel: 'Agregar');
-      if (f == null || !mounted) return;
-      await _run(() => _repo.addManualPlayer(code, f.nick, deck: f.deck));
+      final inTournament = {
+        for (final p in players.values)
+          if (p.rosterKey != null) p.rosterKey!,
+      };
+      final pick = await pickRosterPlayer(context, inTournament);
+      if (pick == null || !mounted) return;
+      var nick = pick.nick;
+      var deck = const DeckInfo();
+      if (t.asksDeck) {
+        final f = await playerDialog(context, t,
+            title: 'Baraja de ${pick.nick}', okLabel: 'Agregar', nick: pick.nick);
+        if (f == null || !mounted) return;
+        nick = f.nick;
+        deck = f.deck;
+      }
+      await _run(() => _repo.addPlayerFromRoster(t, nick,
+          rosterId: pick.person?.id, deck: deck));
     }
 
     Future<void> joinAsOrg() async {
@@ -883,7 +913,7 @@ class _TournamentScreenState extends State<TournamentScreen> {
             onTap: () => editPlayer(ps[i]),
             title: Text('${i + 1}. ${ps[i].nick}${ps[i].id == uid ? ' (tú)' : ''}'),
             subtitle: Text([
-              ps[i].uid != null ? 'Con app' : 'Manual',
+              ps[i].uid != null ? (ps[i].google ? 'Google' : 'App') : 'Manual',
               if (ps[i].dropped) 'drop',
               if ((decks[ps[i].id]?.commander ?? '').isNotEmpty)
                 decks[ps[i].id]!.commander,

@@ -8,8 +8,16 @@ import '../widgets/common.dart';
 import 'tournament_screen.dart';
 
 /// Historial de torneos en los que el usuario jugó u organizó.
-class HistoryScreen extends StatelessWidget {
+class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
+  @override
+  State<HistoryScreen> createState() => _HistoryScreenState();
+}
+
+class _HistoryScreenState extends State<HistoryScreen> {
+  /// Torneos en que jugué como jugador manual y luego me vincularon a mi cuenta.
+  late final Future<List<MyTournamentRef>> _linked =
+      Repo.i.linkedTournaments().catchError((_) => <MyTournamentRef>[]);
 
   @override
   Widget build(BuildContext context) {
@@ -22,9 +30,16 @@ class HistoryScreen extends StatelessWidget {
             return const Center(child: CircularProgressIndicator());
           }
           final me = snap.data!;
+          return FutureBuilder<List<MyTournamentRef>>(
+            future: _linked,
+            builder: (context, linked) {
           final seen = <String>{};
           final items = <MyTournamentRef>[
-            for (final r in [...Repo.refs(me, 'joined'), ...Repo.refs(me, 'organized')])
+            for (final r in [
+              ...Repo.refs(me, 'joined'),
+              ...(linked.data ?? const <MyTournamentRef>[]),
+              ...Repo.refs(me, 'organized'),
+            ])
               if (seen.add(r.code)) r,
           ];
           if (items.isEmpty) {
@@ -42,6 +57,8 @@ class HistoryScreen extends StatelessWidget {
               const SizedBox(height: 8),
               for (final r in items) _HistoryTile(ref: r),
             ],
+          );
+            },
           );
         },
       ),
@@ -74,7 +91,12 @@ class _HistoryTileState extends State<_HistoryTile> {
     final rs = (await repo.roundsOnce(t.code)).where((r) => r.confirmed).toList();
     final uid = FirebaseAuth.instance.currentUser!.uid;
     final st = computeStandings(rs, ps, t.pts);
-    final mine = st.where((s) => s.id == uid);
+    // Mi registro: el indicado por la vinculación, mi uid, o una ficha fusionada.
+    final myId = widget.ref.pid ??
+        (ps.containsKey(uid)
+            ? uid
+            : ps.values.where((p) => p.uid == uid).map((p) => p.id).firstOrNullX);
+    final mine = st.where((s) => s.id == myId);
     return _Summary(t, mine.isEmpty ? null : mine.first, ps.length);
   }
 
@@ -130,4 +152,8 @@ class _HistoryTileState extends State<_HistoryTile> {
       },
     );
   }
+}
+
+extension _FirstOrNull<T> on Iterable<T> {
+  T? get firstOrNullX => isEmpty ? null : first;
 }

@@ -4,7 +4,9 @@ import 'package:flutter/services.dart';
 import '../data/repo.dart';
 import '../logic/swiss.dart';
 import '../ui/theme.dart';
+import 'roster_screen.dart';
 import 'tournament_screen.dart';
+import 'vote_questions_screen.dart';
 
 class OrganizeScreen extends StatefulWidget {
   const OrganizeScreen({super.key});
@@ -71,6 +73,28 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          Row(children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const RosterScreen())),
+                icon: const Icon(Icons.groups),
+                label: const Text('Mis jugadores'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const VoteQuestionsScreen())),
+                icon: const Icon(Icons.how_to_vote),
+                label: const Text('Preguntas'),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 8),
           StreamBuilder<Map<String, dynamic>>(
             stream: Repo.i.me(),
             builder: (context, snap) {

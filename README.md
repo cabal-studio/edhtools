@@ -16,8 +16,10 @@ no se publica y la versión anterior sigue en línea.
 Requiere el secreto `FIREBASE_SERVICE_ACCOUNT_EDHTOOLS` en el repositorio
 (se crea con `firebase init hosting:github`).
 
-Las **reglas de Firestore** (`firestore.rules`) no se publican solas: tras cambiarlas,
-ejecuta `publicar.ps1` en el PC o `firebase deploy --only firestore:rules`.
+Las **reglas e índices de Firestore** no se publican solos. Tras cambiarlos, en el PC:
+```powershell
+iwr https://raw.githubusercontent.com/cabal-studio/edhtools/main/scripts/reglas.ps1 -OutFile D:\Programacion\Juegos\edhtools\reglas.ps1; powershell -ExecutionPolicy Bypass -File D:\Programacion\Juegos\edhtools\reglas.ps1
+```
 
 ## Desarrollo local (Windows)
 ```powershell
