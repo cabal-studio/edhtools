@@ -1,13 +1,13 @@
-# Publica la versión web en https://edhtools.web.app en cada cambio a main.
+# Verifica cada rama; publica en https://edhtools.web.app solo los cambios en main.
 name: Publicar web
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
   workflow_dispatch:
 
 concurrency:
-  group: publicar-web
+  group: publicar-web-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -35,6 +35,7 @@ jobs:
         run: flutter build web --release --no-wasm-dry-run
 
       - name: Publicar en Firebase Hosting
+        if: github.ref == 'refs/heads/main'
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}

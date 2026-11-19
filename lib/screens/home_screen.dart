@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../data/auth.dart';
 import '../ui/theme.dart';
+import 'history_screen.dart';
 import 'organize_screen.dart';
 import 'play_screen.dart';
 
@@ -46,6 +47,14 @@ class HomeScreen extends StatelessWidget {
                 subtitle: 'Crea rondas, mesas y standings',
                 onTap: () => Navigator.push(context,
                     MaterialPageRoute(builder: (_) => const OrganizeScreen())),
+              ),
+              const SizedBox(height: 14),
+              _BigButton(
+                icon: Icons.history,
+                title: 'Mi historial',
+                subtitle: 'Torneos jugados, standings y rondas',
+                onTap: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const HistoryScreen())),
               ),
             ],
           ),

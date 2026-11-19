@@ -109,12 +109,16 @@ class RoundData {
   final List<String> byes;
   final bool confirmed;
   final int repeats;
+
+  /// Preguntas de votación especial activas en esta ronda.
+  final List<String> voteQuestions;
   RoundData(
       {required this.n,
       required this.tables,
       this.byes = const [],
       this.confirmed = false,
-      this.repeats = 0});
+      this.repeats = 0,
+      this.voteQuestions = const []});
 
   factory RoundData.fromMap(Map<String, dynamic> m) => RoundData(
         n: asInt(m['n']),
@@ -124,25 +128,148 @@ class RoundData {
         byes: List<String>.from(m['byes'] ?? const []),
         confirmed: m['confirmed'] == true,
         repeats: asInt(m['repeats']),
+        voteQuestions: List<String>.from(m['voteQuestions'] ?? const []),
       );
 
   /// `seatOf` permite a las reglas de Firestore validar que quien reporta
-  /// realmente está sentado en esa mesa.
+  /// o vota realmente está sentado en esa mesa.
   Map<String, dynamic> toMap() => {
         'n': n,
         'tables': tables.map((t) => t.toMap()).toList(),
         'byes': byes,
         'confirmed': confirmed,
         'repeats': repeats,
-        'seatOf': {
-          for (final tb in tables)
-            for (final p in tb.seats) p: tb.t
-        },
+        'voteQuestions': voteQuestions,
+        'seatOf': seatOfTables(tables),
         'createdAt': DateTime.now().millisecondsSinceEpoch,
       };
 
-  RoundData withConfirmed(bool c) => RoundData(
-      n: n, tables: tables, byes: byes, confirmed: c, repeats: repeats);
+  RoundData copyWith({
+    List<TableData>? tables,
+    List<String>? byes,
+    bool? confirmed,
+    int? repeats,
+    List<String>? voteQuestions,
+  }) =>
+      RoundData(
+        n: n,
+        tables: tables ?? this.tables,
+        byes: byes ?? this.byes,
+        confirmed: confirmed ?? this.confirmed,
+        repeats: repeats ?? this.repeats,
+        voteQuestions: voteQuestions ?? this.voteQuestions,
+      );
+
+  RoundData withConfirmed(bool c) => copyWith(confirmed: c);
+
+  /// Todos los jugadores con asiento o bye en esta ronda.
+  Set<String> get seated => {
+        for (final t in tables) ...t.seats,
+        ...byes,
+      };
+
+  /// Mesa del jugador, o null si no tiene mesa (bye o sin asignar).
+  TableData? tableOf(String pid) {
+    for (final t in tables) {
+      if (t.seats.contains(pid)) return t;
+    }
+    return null;
+  }
+}
+
+Map<String, int> seatOfTables(List<TableData> tables) => {
+      for (final tb in tables)
+        for (final p in tb.seats) p: tb.t
+    };
+
+/// Cantidad de pares de jugadores que ya se enfrentaron en rondas anteriores.
+int countRepeats(List<RoundData> prev, List<TableData> tables) {
+  String key(String a, String b) => a.compareTo(b) < 0 ? '$a|$b' : '$b|$a';
+  final met = <String>{};
+  for (final r in prev) {
+    for (final tb in r.tables) {
+      for (var i = 0; i < tb.seats.length; i++) {
+        for (var j = i + 1; j < tb.seats.length; j++) {
+          met.add(key(tb.seats[i], tb.seats[j]));
+        }
+      }
+    }
+  }
+  var rep = 0;
+  for (final tb in tables) {
+    for (var i = 0; i < tb.seats.length; i++) {
+      for (var j = i + 1; j < tb.seats.length; j++) {
+        if (met.contains(key(tb.seats[i], tb.seats[j]))) rep++;
+      }
+    }
+  }
+  return rep;
+}
+
+/// Edición manual de mesas en la preparación de una ronda.
+/// Mueve [pid] a la posición de [targetPid] (intercambiándolos), o al final
+/// de la mesa [toTable], o a los byes si [toBye]. Limpia los resultados de
+/// las mesas tocadas. Devuelve las nuevas mesas y byes; elimina mesas vacías
+/// y renumera desde 1.
+({List<TableData> tables, List<String> byes}) movePlayer(
+  List<TableData> tables,
+  List<String> byes, {
+  required String pid,
+  String? targetPid,
+  int? toTable,
+  bool toBye = false,
+}) {
+  final ts = tables.map((t) => t.copy()).toList();
+  final bs = List.of(byes);
+  if (pid == targetPid) return (tables: ts, byes: bs);
+
+  // Ubicación (lista + índice) de un jugador: en una mesa o en los byes.
+  ({List<String> list, int i, TableData? table})? where(String who) {
+    for (final t in ts) {
+      final i = t.seats.indexOf(who);
+      if (i >= 0) return (list: t.seats, i: i, table: t);
+    }
+    final i = bs.indexOf(who);
+    if (i >= 0) return (list: bs, i: i, table: null);
+    return null;
+  }
+
+  final from = where(pid);
+  if (targetPid != null) {
+    final to = where(targetPid);
+    if (to == null) return (tables: ts, byes: bs);
+    if (from != null) {
+      // Intercambio: cada uno ocupa el lugar del otro.
+      from.list[from.i] = targetPid;
+      from.table?.res.clear();
+    }
+    to.list[to.i] = pid;
+    to.table?.res.clear();
+  } else {
+    if (from != null) {
+      from.list.removeAt(from.i);
+      from.table?.res.clear();
+    }
+    if (toBye) {
+      bs.add(pid);
+    } else if (toTable != null) {
+      final t = ts.where((x) => x.t == toTable).toList();
+      if (t.isNotEmpty) {
+        t.first.seats.add(pid);
+        t.first.res.clear();
+      } else {
+        ts.add(TableData(t: toTable, seats: [pid]));
+      }
+    }
+  }
+  final kept = ts.where((t) => t.seats.isNotEmpty).toList();
+  return (
+    tables: [
+      for (var i = 0; i < kept.length; i++)
+        TableData(t: i + 1, seats: kept[i].seats, res: kept[i].res)
+    ],
+    byes: bs,
+  );
 }
 
 class Standing {

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../data/repo.dart';
 import '../ui/theme.dart';
+import '../widgets/common.dart';
 import 'organize_screen.dart' show myTournamentList;
 import 'tournament_screen.dart';
 
@@ -15,7 +16,22 @@ class PlayScreen extends StatefulWidget {
 class _PlayScreenState extends State<PlayScreen> {
   final _code = TextEditingController();
   final _nick = TextEditingController();
+  final _cmd = TextEditingController();
+  final _url = TextEditingController();
   bool _busy = false, _nickLoaded = false;
+
+  /// Torneo de la clave escrita (para saber qué datos de baraja pide).
+  Tournament? _peeked;
+  String _peekedCode = '';
+
+  Future<void> _peek(String code) async {
+    if (code.length != 6 || code == _peekedCode) return;
+    _peekedCode = code;
+    try {
+      final t = await Repo.i.peek(code);
+      if (mounted && _peekedCode == code) setState(() => _peeked = t);
+    } catch (_) {}
+  }
 
   Future<void> _go({required bool join}) async {
     final code = _code.text.trim().toUpperCase();
@@ -28,9 +44,21 @@ class _PlayScreenState extends State<PlayScreen> {
       toast(context, 'Ingresa tu nombre');
       return;
     }
+    final t = _peeked;
+    if (join && t != null && t.code == code) {
+      final e = DeckFields.validate(t, _cmd.text, _url.text);
+      if (e != null) {
+        toast(context, e);
+        return;
+      }
+    }
     setState(() => _busy = true);
     await guard(context, () async {
-      final msg = join ? await Repo.i.join(code, nick) : await Repo.i.watch(code);
+      final msg = join
+          ? await Repo.i.join(code, nick,
+              deck: DeckInfo(
+                  commander: _cmd.text.trim(), listUrl: _url.text.trim()))
+          : await Repo.i.watch(code);
       if (!mounted) return;
       if (msg != null) toast(context, msg);
       if (msg == 'No existe un torneo con esa clave') return;
@@ -86,7 +114,18 @@ class _PlayScreenState extends State<PlayScreen> {
                             fontFamily: 'monospace'),
                         decoration: const InputDecoration(
                             labelText: 'Clave del torneo', counterText: ''),
+                        onChanged: (v) {
+                          setState(() {});
+                          _peek(v.trim().toUpperCase());
+                        },
                       ),
+                      if (_peeked != null && _peeked!.code == _code.text.trim().toUpperCase())
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text('Torneo: ${_peeked!.name}',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(color: kOk)),
+                        ),
                       const SizedBox(height: 10),
                       TextField(
                         controller: _nick,
@@ -95,6 +134,8 @@ class _PlayScreenState extends State<PlayScreen> {
                             labelText: 'Tu nombre / nick', counterText: ''),
                         onSubmitted: (_) => _go(join: true),
                       ),
+                      if (_peeked != null && _peeked!.code == _code.text.trim().toUpperCase())
+                        DeckFields(t: _peeked!, commander: _cmd, listUrl: _url),
                       const SizedBox(height: 14),
                       Row(children: [
                         Expanded(

@@ -9,8 +9,17 @@ service cloud.firestore {
     function isOrg(code) {
       return signedIn() && tourn(code).organizerId == request.auth.uid;
     }
+    // Visibilidad configurable: 'never' | 'always' | 'end' (al finalizar).
+    function shared(code, field) {
+      let t = tourn(code);
+      return t.get(field, 'never') == 'always'
+        || (t.get(field, 'never') == 'end' && t.status == 'finished');
+    }
+    function seatOf(code, round) {
+      return get(/databases/$(database)/documents/tournaments/$(code)/rounds/$('r' + string(round))).data.seatOf;
+    }
 
-    // Lista personal de torneos (organizados / unidos) y nick.
+    // Lista personal de torneos (organizados / unidos), nick y preguntas guardadas.
     match /users/{uid} {
       allow read, write: if signedIn() && request.auth.uid == uid;
     }
@@ -30,7 +39,7 @@ service cloud.firestore {
 
       match /players/{pid} {
         allow read: if signedIn();
-        // Un jugador se inscribe a sí mismo; el organizador agrega a cualquiera.
+        // Un jugador (o el organizador) se inscribe a sí mismo; el organizador agrega a cualquiera.
         allow create: if isOrg(code) || (
           signedIn() && pid == request.auth.uid
           && request.resource.data.uid == request.auth.uid
@@ -40,6 +49,13 @@ service cloud.firestore {
           signedIn() && pid == request.auth.uid
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nick', 'dropped']));
         allow delete: if isOrg(code);
+      }
+
+      // Comandante y lista: el organizador y el propio jugador; el resto solo si se comparten.
+      match /decks/{pid} {
+        allow get: if isOrg(code) || (signedIn() && pid == request.auth.uid) || (signedIn() && shared(code, 'shareDecks'));
+        allow list: if isOrg(code) || (signedIn() && shared(code, 'shareDecks'));
+        allow write: if isOrg(code) || (signedIn() && pid == request.auth.uid);
       }
 
       // Rondas, mesas y resultados oficiales: solo el organizador.
@@ -57,7 +73,22 @@ service cloud.firestore {
           && request.resource.data.by == request.auth.uid
           && request.resource.data.round == tourn(code).currentRound
           && key == 'r' + string(request.resource.data.round) + '-t' + string(request.resource.data.table)
-          && get(/databases/$(database)/documents/tournaments/$(code)/rounds/$('r' + string(request.resource.data.round))).data.seatOf[request.auth.uid] == request.resource.data.table);
+          && seatOf(code, request.resource.data.round)[request.auth.uid] == request.resource.data.table);
+      }
+
+      // Votos especiales: id r{n}-{uid}. Cada jugador vota solo por sí mismo,
+      // en la ronda actual y estando sentado en una mesa.
+      match /votes/{key} {
+        allow get: if isOrg(code)
+          || (signedIn() && key.split('-')[1] == request.auth.uid)
+          || (signedIn() && shared(code, 'shareVotes'));
+        allow list: if isOrg(code) || (signedIn() && shared(code, 'shareVotes'));
+        allow delete: if isOrg(code);
+        allow create, update: if signedIn()
+          && request.resource.data.by == request.auth.uid
+          && request.resource.data.round == tourn(code).currentRound
+          && key == 'r' + string(request.resource.data.round) + '-' + request.auth.uid
+          && request.auth.uid in seatOf(code, request.resource.data.round);
       }
     }
   }

@@ -58,4 +58,58 @@ void main() {
     expect(r.tables.expand((t) => t.seats).contains('p0'), false);
     expect(r.tables.map((t) => t.seats.length).toList(), [4, 3]);
   });
+
+  group('edición manual de mesas', () {
+    List<TableData> mesas() => [
+          TableData(t: 1, seats: ['a', 'b', 'c', 'd'], res: {'a': 'W'}),
+          TableData(t: 2, seats: ['e', 'f', 'g']),
+        ];
+
+    test('intercambiar jugadores entre mesas', () {
+      final r = movePlayer(mesas(), [], pid: 'a', targetPid: 'e');
+      expect(r.tables[0].seats, ['e', 'b', 'c', 'd']);
+      expect(r.tables[1].seats, ['a', 'f', 'g']);
+      expect(r.tables[0].res, isEmpty, reason: 'se limpian resultados');
+    });
+
+    test('intercambiar dentro de la misma mesa (orden de asiento)', () {
+      final r = movePlayer(mesas(), [], pid: 'd', targetPid: 'a');
+      expect(r.tables[0].seats, ['d', 'b', 'c', 'a']);
+    });
+
+    test('mover a otra mesa y a bye', () {
+      var r = movePlayer(mesas(), [], pid: 'd', toTable: 2);
+      expect(r.tables[0].seats, ['a', 'b', 'c']);
+      expect(r.tables[1].seats, ['e', 'f', 'g', 'd']);
+      r = movePlayer(r.tables, r.byes, pid: 'g', toBye: true);
+      expect(r.byes, ['g']);
+      r = movePlayer(r.tables, r.byes, pid: 'g', targetPid: 'a');
+      expect(r.byes, ['a']);
+      expect(r.tables[0].seats.first, 'g');
+    });
+
+    test('mesa vacía se elimina y se renumera', () {
+      var r = movePlayer(mesas(), [], pid: 'e', toTable: 1);
+      r = movePlayer(r.tables, r.byes, pid: 'f', toTable: 1);
+      r = movePlayer(r.tables, r.byes, pid: 'g', toTable: 3);
+      expect(r.tables.map((t) => t.t), [1, 2]);
+      expect(r.tables[1].seats, ['g']);
+    });
+
+    test('jugador sin mesa toma el lugar de otro', () {
+      final r = movePlayer(mesas(), [], pid: 'z', targetPid: 'b');
+      expect(r.tables[0].seats, ['a', 'z', 'c', 'd']);
+      expect([...r.tables[0].seats, ...r.tables[1].seats].contains('b'), false);
+    });
+
+    test('contar repeticiones', () {
+      final prev = [RoundData(n: 1, tables: mesas(), confirmed: true)];
+      final nuevas = [
+        TableData(t: 1, seats: ['a', 'b', 'e', 'f']),
+        TableData(t: 2, seats: ['c', 'd', 'g']),
+      ];
+      // a-b, e-f y c-d ya jugaron juntos.
+      expect(countRepeats(prev, nuevas), 3);
+    });
+  });
 }

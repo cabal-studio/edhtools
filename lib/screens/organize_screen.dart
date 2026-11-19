@@ -22,6 +22,10 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
   final _p2 = TextEditingController(text: '0');
   final _p3 = TextEditingController(text: '0');
   final _bye = TextEditingController(text: '5');
+  FieldMode _cmd = FieldMode.optional;
+  FieldMode _list = FieldMode.optional;
+  ShareMode _shareDecks = ShareMode.end;
+  ShareMode _shareVotes = ShareMode.never;
   bool _busy = false;
 
   num _n(TextEditingController c, num d) => num.tryParse(c.text.trim()) ?? d;
@@ -41,6 +45,10 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
           p3: _n(_p3, 0),
           bye: _n(_bye, 5),
         ),
+        commanderField: _cmd,
+        deckListField: _list,
+        shareDecks: _shareDecks,
+        shareVotes: _shareVotes,
       );
       if (!mounted) return;
       Navigator.push(context,
@@ -118,6 +126,25 @@ class _OrganizeScreenState extends State<OrganizeScreen> {
                     'El bye solo ocurre con 5 jugadores (mesa de 4 + 1 libre).',
                     style: TextStyle(color: kMuted, fontSize: 12.5),
                   ),
+                  const SizedBox(height: 16),
+                  const Text('INSCRIPCIÓN Y PRIVACIDAD',
+                      style: TextStyle(color: kGold, fontSize: 12)),
+                  FieldModePicker(
+                      label: 'Baraja / Comandante',
+                      value: _cmd,
+                      onChanged: (v) => setState(() => _cmd = v)),
+                  FieldModePicker(
+                      label: 'Lista de la baraja (URL)',
+                      value: _list,
+                      onChanged: (v) => setState(() => _list = v)),
+                  ShareModePicker(
+                      label: 'Quién ve las barajas',
+                      value: _shareDecks,
+                      onChanged: (v) => setState(() => _shareDecks = v)),
+                  ShareModePicker(
+                      label: 'Quién ve los votos especiales',
+                      value: _shareVotes,
+                      onChanged: (v) => setState(() => _shareVotes = v)),
                   const SizedBox(height: 14),
                   FilledButton(
                     onPressed: _busy ? null : _create,
