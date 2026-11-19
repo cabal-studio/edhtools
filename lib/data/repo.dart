@@ -598,17 +598,25 @@ class Repo {
   ///  * sin [rosterId]: jugador nuevo; se crea su ficha manual.
   Future<void> addPlayerFromRoster(Tournament t, String nick,
       {String? rosterId, DeckInfo deck = const DeckInfo()}) async {
-    final rid = rosterId ?? people.doc().id;
+    String? rid = rosterId;
     final ts = now;
-    if (rosterId == null) {
-      await people.doc(rid).set({
-        'nick': nick,
-        'kind': 'manual',
-        'uid': null,
-        'google': false,
-        'tournaments': [],
-        'createdAt': now,
-      });
+    if (rid == null) {
+      // Ficha nueva en el mantenedor (si las reglas aún no lo permiten, el
+      // jugador se agrega igual y se registra después con syncRoster).
+      try {
+        final ref = people.doc();
+        await ref.set({
+          'nick': nick,
+          'kind': 'manual',
+          'uid': null,
+          'google': false,
+          'tournaments': [],
+          'createdAt': ts,
+        });
+        rid = ref.id;
+      } catch (_) {
+        rid = null;
+      }
     }
     final ref = await _db.collection('tournaments/${t.code}/players').add({
       'nick': nick,
@@ -618,10 +626,14 @@ class Repo {
       'joinedAt': ts,
     });
     if (!deck.isEmpty) await saveDeck(t.code, ref.id, deck);
-    await people.doc(rid).set({
-      'tournaments': FieldValue.arrayUnion([_tRef(t, ref.id, ts)]),
-      'updatedAt': now,
-    }, SetOptions(merge: true));
+    if (rid != null) {
+      try {
+        await people.doc(rid).set({
+          'tournaments': FieldValue.arrayUnion([_tRef(t, ref.id, ts)]),
+          'updatedAt': now,
+        }, SetOptions(merge: true));
+      } catch (_) {}
+    }
   }
 
   final _synced = <String>{};
