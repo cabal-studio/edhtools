@@ -49,6 +49,20 @@ class _RosterScreenState extends State<RosterScreen> {
   late final Stream<List<RosterPerson>> _stream =
       Repo.i.rosterPeople(owner: widget.owner);
 
+  Future<void> _delete(List<RosterPerson> ps) async {
+    final ok = await confirmDialog(
+        context,
+        ps.length == 1
+            ? '¿Eliminar a "${ps.first.nick}" del mantenedor? Los torneos donde jugó no cambian. No se puede deshacer.'
+            : '¿Eliminar ${ps.length} jugadores ficticios (sin cuenta) del mantenedor? Los torneos donde jugaron no cambian. No se puede deshacer.',
+        ok: 'Eliminar');
+    if (!ok || !mounted) return;
+    await guard(context, () async {
+      await Repo.i.deleteRosterPeople(ps.map((p) => p.id), owner: widget.owner);
+      if (mounted) toast(context, '${ps.length} jugador(es) eliminados');
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -93,6 +107,16 @@ class _RosterScreenState extends State<RosterScreen> {
               selected: {filter},
               onSelectionChanged: (s) => setState(() => filter = s.first),
             ),
+            if (manual > 0 && filter != _Filter.app)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  style: TextButton.styleFrom(foregroundColor: kBad),
+                  onPressed: () => _delete(all.where((p) => p.isManual).toList()),
+                  icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+                  label: Text('Eliminar todos los ficticios ($manual)'),
+                ),
+              ),
             const SizedBox(height: 8),
             if (list.isEmpty)
               const EmptyCard(
@@ -102,7 +126,15 @@ class _RosterScreenState extends State<RosterScreen> {
                 child: ListTile(
                   title: Text(p.nick),
                   subtitle: Text('${p.tournamentCount} torneo(s)'),
-                  trailing: KindBadge(p),
+                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                    KindBadge(p),
+                    if (p.isManual)
+                      IconButton(
+                        tooltip: 'Eliminar del mantenedor',
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () => _delete([p]),
+                      ),
+                  ]),
                   onTap: () => Navigator.push(
                       context,
                       MaterialPageRoute(

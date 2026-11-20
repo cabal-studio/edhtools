@@ -1266,6 +1266,19 @@ class Repo {
     }
   }
 
+  /// Borra fichas del mantenedor (la UI solo lo ofrece para manuales).
+  /// Los torneos donde jugaron no cambian.
+  Future<void> deleteRosterPeople(Iterable<String> ids, {String? owner}) async {
+    final list = ids.toList();
+    for (var i = 0; i < list.length; i += 400) {
+      final b = _db.batch();
+      for (final id in list.skip(i).take(400)) {
+        b.delete(peopleOf(owner).doc(id));
+      }
+      await b.commit();
+    }
+  }
+
   Future<void> renameRosterPerson(String id, String nick, {String? owner}) =>
       peopleOf(owner).doc(id).update({'nick': nick, 'updatedAt': now});
 
