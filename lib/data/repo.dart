@@ -1095,15 +1095,45 @@ class Repo {
     }
   }
 
+  /// Orden de la lista: el que fijó el organizador (campo 'order'); sin
+  /// orden, positivos primero y negativos al final, luego por nombre.
+  static List<Achievement> _sortedAch(
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
+    num? ord(Map<String, dynamic> m) => m['order'] is num ? m['order'] as num : null;
+    final items = [
+      for (final d in docs) (Achievement.fromMap(d.id, d.data()), ord(d.data()))
+    ];
+    int byDefault(Achievement a, Achievement b) {
+      final s = (a.points < 0 ? 1 : 0) - (b.points < 0 ? 1 : 0);
+      if (s != 0) return s;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    }
+
+    items.sort((x, y) {
+      if (x.$2 != null && y.$2 != null && x.$2 != y.$2) {
+        return x.$2!.compareTo(y.$2!);
+      }
+      if ((x.$2 == null) != (y.$2 == null)) return x.$2 == null ? 1 : -1;
+      return byDefault(x.$1, y.$1);
+    });
+    return [for (final i in items) i.$1];
+  }
+
   Stream<List<Achievement>> achievementCatalog(String listId, {String? owner}) =>
-      achCatalogOf(owner, listId).snapshots().map(
-      (q) => q.docs.map((d) => Achievement.fromMap(d.id, d.data())).toList()
-        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase())));
+      achCatalogOf(owner, listId).snapshots().map((q) => _sortedAch(q.docs));
 
   Future<List<Achievement>> achievementsOnce(String listId, {String? owner}) async {
     final q = await achCatalogOf(owner, listId).get();
-    return q.docs.map((d) => Achievement.fromMap(d.id, d.data())).toList()
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return _sortedAch(q.docs);
+  }
+
+  /// Guarda el orden de la lista (posición de cada logro).
+  Future<void> setAchOrder(String listId, List<String> ids, {String? owner}) async {
+    final b = _db.batch();
+    for (var i = 0; i < ids.length; i++) {
+      b.update(achCatalogOf(owner, listId).doc(ids[i]), {'order': i});
+    }
+    await b.commit();
   }
 
   Future<void> _recount(String listId, String? owner) async {
@@ -1112,7 +1142,9 @@ class Repo {
   }
 
   Future<void> saveAchievement(String listId, Achievement a, {String? owner}) async {
-    await achCatalogOf(owner, listId).doc(a.id).set({...a.toMap(), 'updatedAt': now});
+    await achCatalogOf(owner, listId)
+        .doc(a.id)
+        .set({...a.toMap(), 'updatedAt': now}, SetOptions(merge: true));
     await _recount(listId, owner);
   }
 
@@ -1125,7 +1157,8 @@ class Repo {
       {String? owner}) async {
     final b = _db.batch();
     for (final a in list) {
-      b.set(achCatalogOf(owner, listId).doc(a.id), {...a.toMap(), 'updatedAt': now});
+      b.set(achCatalogOf(owner, listId).doc(a.id),
+          {...a.toMap(), 'updatedAt': now}, SetOptions(merge: true));
     }
     await b.commit();
     await _recount(listId, owner);

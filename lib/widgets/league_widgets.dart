@@ -187,7 +187,11 @@ class _AchievementSelectorState extends State<AchievementSelector> {
       Wrap(spacing: 6, runSpacing: 6, children: [
         for (final a in all)
           FilterChip(
-            label: Text('${a.name} (${a.points > 0 ? '+' : ''}${a.points})'),
+            label: Text('${a.name} (${a.points > 0 ? '+' : ''}${a.points})',
+                style: a.points < 0 ? const TextStyle(color: kNeg) : null),
+            backgroundColor: a.points < 0 ? kNegCard : null,
+            selectedColor: a.points < 0 ? kNeg.withValues(alpha: 0.25) : null,
+            side: a.points < 0 ? BorderSide(color: kNeg.withValues(alpha: 0.6)) : null,
             tooltip: '${kAchTypeLabels[a.type]} · ${a.description}',
             selected: selIds.contains(a.id),
             onSelected: (v) {

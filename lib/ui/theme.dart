@@ -9,6 +9,9 @@ const kMuted = Color(0xFFA59CC0);
 const kOk = Color(0xFF4FC28A);
 const kBad = Color(0xFFEF6B5B);
 const kBlue = Color(0xFF5AA0EF);
+// Logros negativos: texto y fondo rojizos.
+const kNeg = Color(0xFFFF7A6E);
+const kNegCard = Color(0xFF3A1B2E);
 
 ThemeData buildTheme() {
   final scheme = ColorScheme.fromSeed(

@@ -160,7 +160,37 @@ class _AchListScreenState extends State<AchListScreen> {
     final res = await editAchievementDialog(context, a,
         taken: _current.map((x) => x.id).toSet());
     if (res == null || !mounted) return;
-    await guard(context, () => Repo.i.saveAchievement(widget.listId, res, owner: widget.owner));
+    await guard(context, () async {
+      await Repo.i.saveAchievement(widget.listId, res, owner: widget.owner);
+      if (a == null) await _placeNew([res]);
+    });
+  }
+
+  /// Ubica logros nuevos: positivos tras el último no negativo, negativos
+  /// al final; y guarda el orden completo.
+  Future<void> _placeNew(List<Achievement> added) async {
+    final ids = _current.map((x) => x.id).where((id) => !added.any((n) => n.id == id)).toList();
+    final byId = {for (final x in _current) x.id: x};
+    for (final n in added) {
+      if (n.points < 0) {
+        ids.add(n.id);
+      } else {
+        final lastPos = ids.lastIndexWhere((id) => (byId[id]?.points ?? 0) >= 0);
+        ids.insert(lastPos + 1, n.id);
+      }
+      byId[n.id] = n;
+    }
+    await Repo.i.setAchOrder(widget.listId, ids, owner: widget.owner);
+  }
+
+  Future<void> _reorder(int from, int to) async {
+    final list = [..._current];
+    if (to > from) to--;
+    list.insert(to, list.removeAt(from));
+    setState(() => _current = list);
+    await guard(context,
+        () => Repo.i.setAchOrder(widget.listId, list.map((x) => x.id).toList(),
+            owner: widget.owner));
   }
 
   Future<void> _importCsv() async {
@@ -181,7 +211,10 @@ class _AchListScreenState extends State<AchListScreen> {
       ok: 'Importar',
     );
     if (!ok || !mounted) return;
-    await guard(context, () => Repo.i.importAchievements(widget.listId, r.items, owner: widget.owner));
+    await guard(context, () async {
+      await Repo.i.importAchievements(widget.listId, r.items, owner: widget.owner);
+      await _placeNew(r.items);
+    });
     if (mounted) toast(context, '${r.items.length} logro(s) importados');
   }
 
@@ -217,27 +250,50 @@ class _AchListScreenState extends State<AchListScreen> {
             return const Center(child: CircularProgressIndicator());
           }
           _current = snap.data!;
-          return ListView(padding: const EdgeInsets.fromLTRB(16, 16, 16, 90), children: [
-            const Text(
-                'Logros de esta lista. Al crear una liga eliges la lista y puedes desmarcar logros.',
-                style: TextStyle(color: kMuted, fontSize: 12.5)),
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              onPressed: _importCsv,
-              icon: const Icon(Icons.upload_file),
-              label: const Text('Importar desde CSV'),
-            ),
-            const SizedBox(height: 8),
-            if (_current.isEmpty) const EmptyCard('Esta lista aún no tiene logros.'),
-            for (final a in _current)
-              Card(
+          return ReorderableListView.builder(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 90),
+            buildDefaultDragHandles: false,
+            itemCount: _current.length,
+            onReorder: _reorder,
+            header: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              const Text(
+                  'Logros de esta lista. Arrastra ☰ para ordenarlos; los nuevos quedan con los positivos primero y los negativos al final.',
+                  style: TextStyle(color: kMuted, fontSize: 12.5)),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: _importCsv,
+                icon: const Icon(Icons.upload_file),
+                label: const Text('Importar desde CSV'),
+              ),
+              const SizedBox(height: 8),
+              if (_current.isEmpty) const EmptyCard('Esta lista aún no tiene logros.'),
+            ]),
+            itemBuilder: (context, i) {
+              final a = _current[i];
+              final neg = a.points < 0;
+              return Card(
+                key: ValueKey(a.id),
+                color: neg ? kNegCard : null,
+                shape: neg
+                    ? RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(color: kNeg.withValues(alpha: 0.6)))
+                    : null,
                 child: ListTile(
+                  leading: ReorderableDragStartListener(
+                    index: i,
+                    child: const Icon(Icons.drag_handle, color: kMuted),
+                  ),
                   title: Text(a.name),
-                  subtitle: Text([
-                    kAchTypeLabels[a.type]!,
-                    '${a.points} pts',
-                    if (a.description.isNotEmpty) a.description,
-                  ].join(' · ')),
+                  subtitle: Text.rich(TextSpan(children: [
+                    TextSpan(text: '${kAchTypeLabels[a.type]!} · '),
+                    TextSpan(
+                        text: '${a.points > 0 ? '+' : ''}${a.points} pts',
+                        style: TextStyle(
+                            color: neg ? kNeg : kGoldLight,
+                            fontWeight: FontWeight.w700)),
+                    if (a.description.isNotEmpty) TextSpan(text: ' · ${a.description}'),
+                  ])),
                   onTap: () => _edit(a),
                   trailing: IconButton(
                     tooltip: 'Borrar',
@@ -253,8 +309,9 @@ class _AchListScreenState extends State<AchListScreen> {
                     },
                   ),
                 ),
-              ),
-          ]);
+              );
+            },
+          );
         },
       ),
     );
