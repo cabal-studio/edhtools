@@ -22,6 +22,7 @@ class TiebreakEditor extends StatelessWidget {
         'mw',
         'oomw',
         'wins',
+        if (achievements.isNotEmpty) ...['achPos', 'achNeg'],
         for (final a in achievements.values) 'ach:${a.id}',
       ].where((k) => !value.contains(k)).toList();
 

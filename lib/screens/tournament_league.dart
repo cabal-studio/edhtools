@@ -484,6 +484,7 @@ extension _LeagueUI on _TournamentScreenState {
           'omw' => fmtPct(s.omw),
           'mw' => fmtPct(s.mw),
           'oomw' => fmtPct(s.oomw),
+          'achNeg' => '${s.achNeg}',
           _ => '${s.tiebreak(k)}',
         };
     String head(String k) => switch (k) {
@@ -491,6 +492,8 @@ extension _LeagueUI on _TournamentScreenState {
           'mw' => 'MW',
           'oomw' => 'OOMW',
           'wins' => 'VICT.',
+          'achPos' => 'LOGROS +',
+          'achNeg' => 'LOGROS −',
           _ => (t.achievements[k.substring(4)]?.name ?? 'Logro').toUpperCase(),
         };
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [

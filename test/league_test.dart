@@ -90,6 +90,53 @@ void main() {
       expect(st.last.total, -2);
     });
 
+    test('desempate por cantidad de logros negativos (menos es mejor)', () {
+      final r = ronda(1, {'p0': 'W', 'p1': 'L', 'p2': 'L', 'p3': 'L'});
+      final claims = [
+        const Claim(id: '1', round: 1, pid: 'p2', ach: 'b'),
+        const Claim(id: '2', round: 1, pid: 'p2', ach: 'neg'),
+        const Claim(id: '3', round: 1, pid: 'p3', ach: 'a'),
+      ];
+      final st = computeLeagueStandings(
+          rounds: [r], players: makePlayers(4), pts: pts,
+          achievements: achs, claims: claims, tiebreakers: ['achNeg']);
+      final p2 = st.firstWhere((s) => s.id == 'p2');
+      final p3 = st.firstWhere((s) => s.id == 'p3');
+      expect(p2.total, p3.total);
+      expect(p2.achNeg, 1);
+      expect(p3.achNeg, 0);
+      expect(p3.rank, lessThan(p2.rank));
+    });
+
+    test('desempate por cantidad de logros positivos (más es mejor)', () {
+      final r = ronda(1, {'p0': 'W', 'p1': 'L', 'p2': 'L', 'p3': 'L'});
+      final claims = [
+        const Claim(id: '1', round: 1, pid: 'p2', ach: 'b'),
+        const Claim(id: '2', round: 1, pid: 'p2', ach: 'a'),
+        const Claim(id: '3', round: 1, pid: 'p2', ach: 'neg'),
+        const Claim(id: '4', round: 1, pid: 'p2', ach: 'neg'),
+      ];
+      final st = computeLeagueStandings(
+          rounds: [r], players: makePlayers(4), pts: pts,
+          achievements: achs, claims: claims, tiebreakers: ['achPos']);
+      final p2 = st.firstWhere((s) => s.id == 'p2');
+      final p3 = st.firstWhere((s) => s.id == 'p3');
+      expect(p2.total, p3.total);
+      expect(p2.achPos, 2);
+      expect(p2.rank, lessThan(p3.rank));
+      // Sin ver los logros (espectador) se usan los conteos guardados.
+      final d = storedRoundData(r, pts, achs, claims, ['achPos', 'achNeg']);
+      final r2 = RoundData(
+          n: 1, confirmed: true, tables: r.tables,
+          scores: d.scores, achTb: d.achTb);
+      final st2 = computeLeagueStandings(
+          rounds: [r2], players: makePlayers(4), pts: pts,
+          achievements: achs, claims: null, tiebreakers: ['achPos']);
+      final q2 = st2.firstWhere((s) => s.id == 'p2');
+      expect(q2.achPos, 2);
+      expect(q2.achNeg, 2);
+    });
+
     test('quien no jugó no ocupa puestos aunque otros tengan negativo', () {
       final r = ronda(1, {'p0': 'W', 'p1': 'L', 'p2': 'L', 'p3': 'L'});
       final claims = [const Claim(id: '1', round: 1, pid: 'p1', ach: 'neg')];

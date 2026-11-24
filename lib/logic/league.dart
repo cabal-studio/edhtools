@@ -265,7 +265,9 @@ String achievementsToCsv(List<Achievement> list) {
 
 // ----------------------------------------------------------- standings
 /// Claves de desempate configurables:
-///  'omw', 'mw', 'oomw', 'wins' y 'ach:{id}' (veces que obtuvo ese logro).
+///  'omw', 'mw', 'oomw', 'wins', 'achPos' (logros positivos obtenidos, más
+///  es mejor), 'achNeg' (logros negativos obtenidos, menos es mejor) y
+///  'ach:{id}' (veces que obtuvo ese logro).
 String tiebreakLabel(String key, Map<String, Achievement> achs) {
   if (key.startsWith('ach:')) {
     return 'Logro: ${achs[key.substring(4)]?.name ?? '¿?'}';
@@ -275,6 +277,8 @@ String tiebreakLabel(String key, Map<String, Achievement> achs) {
     'mw' => 'MW% (propio)',
     'oomw' => 'OOMW% (rivales de rivales)',
     'wins' => 'Victorias',
+    'achPos' => 'Cantidad de logros positivos',
+    'achNeg' => 'Cantidad de logros negativos (menos es mejor)',
     _ => key,
   };
 }
@@ -298,6 +302,9 @@ class LeagueStanding {
   int wins = 0;
   double omw = 0, mw = 0, oomw = 0;
   final Map<String, int> achCounts = {};
+
+  /// Cantidad de logros obtenidos con puntos positivos / negativos.
+  int achPos = 0, achNeg = 0;
   int rank = 0;
   LeagueStanding(this.id);
 
@@ -308,6 +315,9 @@ class LeagueStanding {
         'mw' => mw,
         'oomw' => oomw,
         'wins' => wins,
+        'achPos' => achPos,
+        // Menos logros negativos es mejor: se invierte para ordenar.
+        'achNeg' => -achNeg,
         _ when key.startsWith('ach:') => achCounts[key.substring(4)] ?? 0,
         _ => 0,
       };
@@ -380,6 +390,11 @@ List<LeagueStanding> computeLeagueStandings({
       s.oomw = b.oomw;
       s.wins = b.w;
     }
+    s.achCounts.forEach((id, k) {
+      final p = achievements[id]?.points ?? 0;
+      if (p > 0) s.achPos += k;
+      if (p < 0) s.achNeg += k;
+    });
     s.nick = players[s.id]?.nick ?? '¿?';
     s.dropped = players[s.id]?.dropped ?? false;
     s.allPoints = s.roundScores.values.fold<num>(0, (a, b) => a + b);
@@ -517,10 +532,13 @@ RoundData buildLeagueRound({
     Iterable<Claim> claims,
     List<String> tiebreakers) {
   final scores = leagueRoundScores(r, pts, achs, claims);
-  final tbAchs = tiebreakers
-      .where((k) => k.startsWith('ach:'))
-      .map((k) => k.substring(4))
-      .toSet();
+  final tbAchs = {
+    ...tiebreakers.where((k) => k.startsWith('ach:')).map((k) => k.substring(4)),
+    if (tiebreakers.contains('achPos'))
+      ...achs.values.where((a) => a.points > 0).map((a) => a.id),
+    if (tiebreakers.contains('achNeg'))
+      ...achs.values.where((a) => a.points < 0).map((a) => a.id),
+  };
   final achTb = <String, Map<String, int>>{};
   for (final c in claims.where((c) => c.round == r.n && tbAchs.contains(c.ach))) {
     final m = achTb.putIfAbsent(c.pid, () => {});
